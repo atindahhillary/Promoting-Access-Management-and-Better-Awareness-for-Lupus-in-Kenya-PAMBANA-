@@ -342,7 +342,7 @@ function bindTeam(sw) {
     if (!sample) { state.reports = $('#reports').value; save(); }
     const { reports, rejected } = collectHubReports(sample || state.reports);
     const s = hubTotals(reports);
-    $('#totals').innerHTML = `<div class="stats">${[[sw ? 'Vikundi' : 'Hubs reporting', s.hubs.size], [sw ? 'Ripoti' : 'Reports', s.sessions], [sw ? 'Mahudhurio' : 'Attendances', s.attended], [sw ? 'Wapya' : 'New members', s.fresh], [sw ? 'Ufuatiliaji' : 'Follow-ups', s.followUp], [sw ? 'Uhaba wa dawa' : 'Shortage reports', s.shortages]].map(([k, v]) => `<div><b>${esc(suppress(v))}</b><span>${k}</span></div>`).join('')}</div>
+    $('#totals').innerHTML = `<div class="stats">${[[sw ? 'Vikundi' : 'Hubs reporting', s.hubs.size], [sw ? 'Ripoti' : 'Reports', s.sessions], [sw ? 'Mahudhurio' : 'Attendances', s.attended], [sw ? 'Wapya' : 'New members', s.fresh], [sw ? 'Ufuatiliaji' : 'Follow-ups', s.followUp], [sw ? 'Uhaba wa dawa' : 'Shortage reports', s.shortages]].map(([k, v]) => `<div><b>${esc(k === (sw ? 'Vikundi' : 'Hubs reporting') || k === (sw ? 'Ripoti' : 'Reports') ? v : suppress(v))}</b><span>${k}</span></div>`).join('')}</div>
       <p class="note">${sw ? 'Namba chini ya 5 zimefichwa.' : 'Counts under 5 are hidden.'}</p>
       ${rejected.length ? `<p role="alert">${sw ? 'Hazikusomeka' : 'Could not read'}: ${rejected.map(esc).join('; ')}</p>` : ''}`;
     return reports;
