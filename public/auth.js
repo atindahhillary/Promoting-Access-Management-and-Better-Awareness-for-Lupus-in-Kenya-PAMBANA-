@@ -11,6 +11,16 @@ export async function derive(pin, salt) {
   return hex(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: enc.encode(salt), iterations: ITERATIONS }, key, 256));
 }
 
+// Older builds kept one unsalted hash in state.pin. It is read only to migrate the
+// person to a profile at their next login, and the app stays locked until then.
+export async function legacyVerify(storedHash, pin) {
+  const buf = await crypto.subtle.digest('SHA-256', enc.encode(`pambana:${pin}`));
+  const h = hex(buf);
+  let diff = h.length ^ String(storedHash).length;
+  for (let i = 0; i < h.length; i++) diff |= h.charCodeAt(i) ^ (String(storedHash).charCodeAt(i) || 0);
+  return diff === 0;
+}
+
 export async function makeProfile({ name, pin }, now = Date.now()) {
   const salt = newSalt();
   return { name: name.trim(), salt, hash: await derive(pin, salt), created: new Date(now).toLocaleDateString('en-CA') };

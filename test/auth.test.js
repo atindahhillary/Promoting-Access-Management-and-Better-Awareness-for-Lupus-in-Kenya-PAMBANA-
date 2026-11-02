@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeProfile, verify, derive, checkRegistration, waitSeconds } from '../public/auth.js';
+import { createHash } from 'node:crypto';
+import { makeProfile, verify, legacyVerify, derive, checkRegistration, waitSeconds } from '../public/auth.js';
 
 const ok = { name: 'Amina', pin: '4821', pin2: '4821', adult: true, consent: true };
 
@@ -48,4 +49,11 @@ test('wrong-PIN tries are slowed after five, up to five minutes', () => {
   assert.equal(waitSeconds(5, t0, t0 + 31_000), 0);
   assert.equal(waitSeconds(8, t0, t0), 60);
   assert.equal(waitSeconds(100, t0, t0), 300);
+});
+
+test('a PIN saved by an older build still verifies, so it can be migrated and not dropped', async () => {
+  const old = createHash('sha256').update('pambana:7391').digest('hex');
+  assert.equal(await legacyVerify(old, '7391'), true);
+  assert.equal(await legacyVerify(old, '7392'), false);
+  assert.equal(await legacyVerify('', '7391'), false);
 });

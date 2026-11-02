@@ -1,12 +1,11 @@
 import * as C from './content.js';
-import { makeProfile, verify, checkRegistration, waitSeconds } from './auth.js';
+import { makeProfile, verify, legacyVerify, checkRegistration, waitSeconds } from './auth.js';
 import { NAME as BOT, open as openChat, respond as chatRespond } from './companion.js';
 import { ussd, smsReply, nextStep, diaryFlag, mergeEntry, hubLine, collectHubReports, hubTotals, suppress, reportsCsv, clinicSummary } from './logic.js';
 
 const KEY = 'pambana.v1';
 const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } };
-let state = { lang: 'sw', theme: 'auto', entries: [], visits: [], hub: [], profile: null, auth: { fails: 0, last: 0 }, reports: '', ...load() };
-delete state.pin; // older builds kept a bare PIN; profiles replace it
+let state = { lang: 'sw', theme: 'auto', entries: [], visits: [], hub: [], profile: null, pin: null, auth: { fails: 0, last: 0 }, reports: '', ...load() };
 let saveFailed = false;
 const save = () => {
   try { localStorage.setItem(KEY, JSON.stringify(state)); saveFailed = false; } catch { saveFailed = true; }
@@ -112,7 +111,7 @@ function home() {
     <div class="grid2">${tile('#/hub', 'users', sw ? 'Naongoza kikundi' : 'I run a peer hub', sw ? 'Tuma namba za mwezi' : 'Send monthly numbers')}
       ${tile('#/phone', 'phone', sw ? 'Natumia simu ya kawaida' : 'I use a basic phone', sw ? 'SMS na USSD' : 'SMS and USSD')}
       ${tile('#/team', 'chart', sw ? 'Nafanya kazi na LFA' : 'I work with LFA', sw ? 'Jumla na viashiria' : 'Totals and indicators')}
-      ${state.profile ? tile('#/account', unlocked ? 'user' : 'lock', unlocked ? (sw ? 'Wasifu wangu' : 'My profile') : (sw ? 'Ingia' : 'Log in'), sw ? 'Faragha, kwenye simu hii' : 'Private, on this phone') : tile('#/account', 'user', sw ? 'Fungua wasifu' : 'Create a profile', sw ? 'Jina na PIN, hakuna barua pepe' : 'Nickname and PIN, no email')}</div>
+      ${hasLogin() ? tile('#/account', unlocked ? 'user' : 'lock', unlocked ? (sw ? 'Wasifu wangu' : 'My profile') : (sw ? 'Ingia' : 'Log in'), sw ? 'Faragha, kwenye simu hii' : 'Private, on this phone') : tile('#/account', 'user', sw ? 'Fungua wasifu' : 'Create a profile', sw ? 'Jina na PIN, hakuna barua pepe' : 'Nickname and PIN, no email')}</div>
     <section class="band"><h2>${sw ? 'Hauko peke yako' : 'You are not alone'}</h2><p>${sw ? 'Vikundi vya wenzao vinavyoongozwa na watu wanaoishi na lupus vinaanza katika matawi 10 ya LFA.' : 'Peer groups led by people who live with lupus are starting across LFA\'s 10 chapters.'}</p>
       <div class="btns"><a class="btn" href="#/hub">${sw ? 'Vikundi' : 'Peer hubs'}</a><a class="btn ghost" href="tel:${C.LFA_INTL}">${sw ? 'Piga LFA' : 'Call LFA'}</a></div></section>
     <p class="note">${l('noPhone')}</p><p class="note">${l('privacy')}</p>`;
@@ -263,8 +262,9 @@ function aboutView() {
 // Device-only profile: register and log in on this phone, with no server. Help and
 // danger signs are never behind it.
 const auth = { ok: false };
-const locked = () => !!state.profile && !auth.ok;
-const blank = () => ({ entries: [], visits: [], hub: [], profile: null, auth: { fails: 0, last: 0 }, reports: '' });
+const hasLogin = () => !!(state.profile || state.pin); // state.pin is a legacy PIN awaiting migration
+const locked = () => hasLogin() && !auth.ok;
+const blank = () => ({ entries: [], visits: [], hub: [], profile: null, pin: null, auth: { fails: 0, last: 0 }, reports: '' });
 
 function eraseAll() {
   const sw = state.lang === 'sw';
@@ -275,7 +275,7 @@ function eraseAll() {
 
 function loginView() {
   const sw = state.lang === 'sw';
-  return `<h1 tabindex="-1">${sw ? 'Karibu tena' : 'Welcome back'}, ${esc(state.profile.name)}</h1>
+  return `<h1 tabindex="-1">${sw ? 'Karibu tena' : 'Welcome back'}${state.profile ? `, ${esc(state.profile.name)}` : ''}</h1>
     <p>${sw ? 'Weka PIN yako ili kuona taarifa zako. Msaada na dalili za hatari hazihitaji kuingia.' : 'Enter your PIN to see your information. Help and danger signs never need a login.'}</p>
     <form id="login" class="stack"><label>PIN <input id="pin" type="password" inputmode="numeric" maxlength="8" autocomplete="off" required></label><button class="btn">${sw ? 'Ingia' : 'Log in'}</button></form>
     <p id="loginerr" role="alert"></p>
@@ -290,7 +290,10 @@ function bindLogin() {
     e.preventDefault();
     const wait = waitSeconds(state.auth.fails, state.auth.last);
     if (wait) { out.textContent = sw ? `Subiri sekunde ${wait} kisha ujaribu tena.` : `Please wait ${wait} seconds and try again.`; return; }
-    if (await verify(state.profile, $('#pin').value)) { auth.ok = true; state.auth = { fails: 0, last: 0 }; save(); render(); return; }
+    const pin = $('#pin').value;
+    if (state.profile ? await verify(state.profile, pin) : await legacyVerify(state.pin, pin)) {
+      if (!state.profile) { state.profile = await makeProfile({ name: sw ? 'Mimi' : 'Me', pin }); state.pin = null; }
+      auth.ok = true; state.auth = { fails: 0, last: 0 }; save(); render(); return; }
     state.auth = { fails: state.auth.fails + 1, last: Date.now() }; save();
     $('#pin').value = '';
     const w = waitSeconds(state.auth.fails, state.auth.last);
@@ -356,8 +359,8 @@ function bindProfile() {
   $('#erase').onclick = eraseAll;
 }
 
-const accountView = () => (!state.profile ? registerView() : locked() ? loginView() : profileView());
-function bindAccount() { if (!state.profile) bindRegister(); else if (locked()) bindLogin(); else bindProfile(); }
+const accountView = () => (!hasLogin() ? registerView() : locked() ? loginView() : profileView());
+function bindAccount() { if (!hasLogin()) bindRegister(); else if (locked()) bindLogin(); else bindProfile(); }
 
 // The Warrior Companion: scripted, bilingual, and kept in memory only (never stored or sent).
 let chat = null;
@@ -436,7 +439,7 @@ function render(focus = true) {
   if (guarded) bindLogin(); else bind(route);
   const ac = $('#acct');
   ac.innerHTML = icon(locked() ? 'lock' : 'user');
-  ac.setAttribute('aria-label', !state.profile ? (state.lang === 'sw' ? 'Fungua wasifu au ingia' : 'Create a profile or log in') : locked() ? (state.lang === 'sw' ? 'Ingia' : 'Log in') : `${state.lang === 'sw' ? 'Wasifu' : 'Profile'}: ${state.profile.name}`);
+  ac.setAttribute('aria-label', !hasLogin() ? (state.lang === 'sw' ? 'Fungua wasifu au ingia' : 'Create a profile or log in') : locked() ? (state.lang === 'sw' ? 'Ingia' : 'Log in') : `${state.lang === 'sw' ? 'Wasifu' : 'Profile'}: ${state.profile.name}`);
   const result = lastResult?.route === route && $(lastResult.target);
   if (result) { result.className = lastResult.cls; result.innerHTML = lastResult.html; }
   if (focus) scrollTo(0, 0);
