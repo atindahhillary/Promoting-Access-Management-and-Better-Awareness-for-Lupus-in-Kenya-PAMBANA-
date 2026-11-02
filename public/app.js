@@ -1,0 +1,366 @@
+import * as C from './content.js';
+import { ussd, smsReply, nextStep, diaryFlag, mergeEntry, hubLine, collectHubReports, hubTotals, suppress, reportsCsv, clinicSummary } from './logic.js';
+
+const KEY = 'pambana.v1';
+const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } };
+let state = { lang: 'sw', theme: 'auto', entries: [], visits: [], hub: [], pin: null, reports: '', ...load() };
+let saveFailed = false;
+const save = () => {
+  try { localStorage.setItem(KEY, JSON.stringify(state)); saveFailed = false; } catch { saveFailed = true; }
+  showDraft();
+  return !saveFailed;
+};
+let lastResult = null; // kept so a danger message survives a re-render
+
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const $ = (s, el = document) => el.querySelector(s);
+const main = () => $('#main');
+const t = pair => esc(pair[state.lang] ?? pair.en);
+const today = () => new Date().toLocaleDateString('en-CA');
+
+const L = {
+  draft: { en: 'Pilot draft. Health content is awaiting clinician review. Do not rely on it for care yet.', sw: 'Rasimu ya majaribio. Maudhui ya afya yanasubiri kukaguliwa na madaktari. Usiyategemee kwa matibabu bado.' },
+  home: { en: 'Home', sw: 'Mwanzo' }, checkin: { en: 'Check-in', sw: 'Hali yangu' }, help: { en: 'Get help', sw: 'Msaada' }, learn: { en: 'Learn', sw: 'Jifunze' }, more: { en: 'More', sw: 'Zaidi' },
+  tagline: { en: 'Pambana means fight and overcome. This tool helps you know the warning signs, keep track of how you are, and reach people who understand.', sw: 'Pambana ni kupigana na kushinda. Zana hii inakusaidia kujua dalili za hatari, kufuatilia hali yako, na kuwafikia wanaokuelewa.' },
+  who: { en: 'What do you need today?', sw: 'Unahitaji nini leo?' },
+  noPhone: { en: 'No smartphone? PAMBANA is designed to work by SMS and USSD on any phone. Those services start once a licensed provider is in place.', sw: 'Huna simu janja? PAMBANA imeundwa kufanya kazi kwa SMS na USSD kwenye simu yoyote. Huduma hizi zitaanza baada ya kupata mtoa huduma aliyeidhinishwa.' },
+  privacy: { en: 'Your check-ins stay on this phone. PAMBANA has no accounts and no patient database.', sw: 'Taarifa zako zinabaki kwenye simu hii. PAMBANA haina akaunti wala hifadhidata ya wagonjwa.' },
+  saveFail: { en: 'Warning: this phone could not save your last change.', sw: 'Tahadhari: simu hii haikuweza kuhifadhi mabadiliko yako.' },
+  back: { en: 'Back', sw: 'Rudi' }, save: { en: 'Save', sw: 'Hifadhi' },
+};
+const l = k => esc(L[k][state.lang]);
+function showDraft() { $('#draft').textContent = L.draft[state.lang] + (saveFailed ? ` ${L.saveFail[state.lang]}` : ''); }
+
+const CARDS = [
+  ['#/checkin', { en: 'I live with lupus', sw: 'Ninaishi na lupus' }, { en: 'Weekly check-in and a summary for your clinic', sw: 'Ukaguzi wa wiki na muhtasari wa kliniki' }],
+  ['#/learn', { en: 'I am worried, or I care for someone', sw: 'Nina wasiwasi, au namhudumia mtu' }, { en: 'Plain facts, myths and when to act', sw: 'Ukweli, imani potofu na wakati wa kuchukua hatua' }],
+  ['#/refer', { en: 'I am a health worker', sw: 'Mimi ni mhudumu wa afya' }, { en: 'Referral checklist and the Care Manual', sw: 'Orodha ya rufaa na Mwongozo wa Huduma' }],
+  ['#/hub', { en: 'I run a peer hub', sw: 'Naongoza kikundi' }, { en: 'Send your monthly numbers in one tap', sw: 'Tuma namba za mwezi kwa kubonyeza mara moja' }],
+  ['#/phone', { en: 'I use a basic phone', sw: 'Natumia simu ya kawaida' }, { en: 'Try the SMS and USSD service', sw: 'Jaribu huduma ya SMS na USSD' }],
+  ['#/team', { en: 'I work with LFA', sw: 'Nafanya kazi na LFA' }, { en: 'Hub totals and project indicators', sw: 'Jumla za vikundi na viashiria' }],
+];
+
+function home() {
+  return `<section class="hero"><h1 tabindex="-1">${esc(C.FULL_NAME)}</h1><p class="lead">${l('tagline')}</p>
+    <a class="btn danger" href="#/help">${l('help')}</a></section>
+    <h2>${l('who')}</h2>
+    <div class="cards">${CARDS.map(([h, a, b]) => `<a class="card" href="${h}"><strong>${t(a)}</strong><span>${t(b)}</span></a>`).join('')}</div>
+    <p class="note">${l('noPhone')}</p><p class="note">${l('privacy')}</p>
+    <p class="note"><a href="#/about">${state.lang === 'sw' ? 'Kuhusu PAMBANA, faragha na ushahidi' : 'About PAMBANA, privacy and evidence'}</a></p>`;
+}
+
+function helpView() {
+  const sw = state.lang === 'sw';
+  return `<h1 tabindex="-1">${sw ? 'Nenda hospitali leo ukiona' : 'Go to hospital today for'}</h1>
+    <ul class="flags">${C.RED_FLAGS.map(f => `<li>${t(f)}</li>`).join('')}</ul>
+    <p class="alert">${sw ? 'Huduma hii si ya dharura na hakuna anayeifuatilia kwa wakati halisi. Usisubiri jibu.' : 'This service cannot respond to emergencies and is not watched in real time. Do not wait for a reply.'}</p>
+    <a class="btn" href="tel:${C.LFA_INTL}">${sw ? 'Piga LFA saa za kazi' : 'Call LFA in office hours'}: ${C.LFA_PHONE}</a>
+    <h2>${sw ? 'Muone daktari ndani ya siku 7' : 'See a clinician within 7 days'}</h2>
+    <ul>${C.WITHIN_7.map(f => `<li>${t(f)}</li>`).join('')}</ul>`;
+}
+
+function learnView() {
+  const sw = state.lang === 'sw';
+  const facts = C.LEARN.map(x => { const [h, b] = x[state.lang]; return `<details><summary>${esc(h)}</summary><p>${esc(b)}</p></details>`; }).join('');
+  const myths = C.MYTHS.map(x => { const [m, f] = x[state.lang]; return `<div class="myth"><p class="mythq">${sw ? 'Si kweli' : 'Myth'}: ${esc(m)}</p><p>${esc(f)}</p></div>`; }).join('');
+  return `<h1 tabindex="-1">${l('learn')}</h1>${facts}<h2>${sw ? 'Imani potofu' : 'Myths'}</h2>${myths}`;
+}
+
+const SCALE = { en: ['Fine', 'Mild', 'Bad', 'Very bad'], sw: ['Sawa', 'Kidogo', 'Mbaya', 'Mbaya sana'] };
+const Q = {
+  overall: { en: 'How are you overall?', sw: 'Hali yako kwa jumla?' }, fatigue: { en: 'Tiredness', sw: 'Uchovu' }, joints: { en: 'Joint pain or swelling', sw: 'Maumivu au uvimbe wa viungo' },
+  urgent: { en: 'Any of these this week?', sw: 'Chochote kati ya hivi wiki hii?' }, newSkin: { en: 'New rash, mouth sores or hair loss', sw: 'Upele mpya, vidonda mdomoni au nywele kunyonyoka' },
+  missed: { en: 'Doses missed this week', sw: 'Dozi ulizokosa wiki hii' }, ranOut: { en: 'Ran out of medicine or could not afford it', sw: 'Dawa ziliisha au hukuweza kuzinunua' },
+};
+const scale = name => `<fieldset><legend>${t(Q[name])}</legend><div class="seg">${SCALE[state.lang].map((s, i) => `<label><input type="radio" name="${name}" value="${i}" required><span>${esc(s)}</span></label>`).join('')}</div></fieldset>`;
+
+const pinPass = { ok: false };
+async function hash(pin) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`pambana:${pin}`));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function checkinView() {
+  const sw = state.lang === 'sw';
+  if (state.pin && !pinPass.ok) return `<h1 tabindex="-1">PAMBANA</h1><form id="unlock"><label>PIN <input id="pin" type="password" inputmode="numeric" pattern="[0-9]{4,8}" autocomplete="off" required></label><button class="btn">${sw ? 'Fungua' : 'Unlock'}</button><p id="pinerr" role="alert"></p></form><button id="wipe" class="btn ghost">${sw ? 'Umesahau PIN? Futa yote' : 'Forgot PIN? Erase everything'}</button>`;
+  const last = state.entries.at(-1);
+  const hist = state.entries.slice(-8).reverse().map(e => `<li>${esc(e.date)}: ${esc(SCALE[state.lang][e.overall])}${e.urgent.length ? ` (${sw ? 'dalili ya hatari' : 'danger sign noted'})` : ''}</li>`).join('');
+  return `<h1 tabindex="-1">${l('checkin')}</h1><p>${sw ? 'Dakika moja kwa wiki inatosha. Inabaki kwenye simu hii.' : 'One minute a week is enough. It stays on this phone.'}</p>
+    <form id="diary">${scale('overall')}${scale('fatigue')}${scale('joints')}
+    <fieldset><legend>${t(Q.urgent)}</legend>${C.RED_FLAGS.map(f => `<label class="check"><input type="checkbox" name="urgent" value="${f.id}"><span>${t(f)}</span></label>`).join('')}
+    <label class="check"><input type="checkbox" name="newSkin"><span>${t(Q.newSkin)}</span></label></fieldset>
+    <fieldset><legend>${t(Q.missed)}</legend><div class="seg">${['0', '1-2', '3+'].map(v => `<label><input type="radio" name="missed" value="${v}" required><span>${v}</span></label>`).join('')}</div></fieldset>
+    <label class="check"><input type="checkbox" name="ranOut"><span>${t(Q.ranOut)}</span></label>
+    <button class="btn">${l('save')}</button></form><div id="flag" role="status"></div>
+    ${hist ? `<h2>${sw ? 'Wiki zilizopita' : 'Past weeks'}</h2><ul>${hist}</ul>` : ''}
+    <h2>${sw ? 'Ziara ya kliniki' : 'Clinic visit'}</h2>
+    <form id="visit" class="row"><label>BP <input name="bp" placeholder="120/80" pattern="[0-9]{2,3}/[0-9]{2,3}"></label><label>${sw ? 'Uzito kg' : 'Weight kg'} <input name="kg" inputmode="decimal" pattern="[0-9]{2,3}(\\.[0-9])?"></label><button class="btn ghost">${l('save')}</button></form>
+    ${state.visits.length ? `<ul>${state.visits.slice(-4).reverse().map(v => `<li>${esc(v.date)}: BP ${esc(v.bp || '-')}, ${esc(v.kg || '-')} kg</li>`).join('')}</ul>` : ''}
+    <h2>${sw ? 'Data yangu' : 'My data'}</h2>
+    <div class="btns"><button id="summary" class="btn ghost" ${last ? '' : 'disabled'}>${sw ? 'Muhtasari wa kliniki' : 'Clinic summary'}</button>
+    <button id="setpin" class="btn ghost">${state.pin ? (sw ? 'Ondoa PIN' : 'Remove PIN') : (sw ? 'Weka PIN' : 'Set a PIN')}</button>
+    <button id="wipe" class="btn ghost">${sw ? 'Futa yote' : 'Erase everything'}</button></div>
+    <pre id="out" hidden></pre>
+    <p class="note">${sw ? 'PIN inaficha skrini hii tu, haisimbi data. Ukifuta data ya kivinjari, taarifa zitapotea.' : 'A PIN only hides this screen. It does not encrypt the data. Clearing browser data erases your check-ins.'}</p>`;
+}
+
+const FLAG_TEXT = {
+  today: { en: 'Go to a health facility today. Do not wait.', sw: 'Nenda kituo cha afya leo. Usisubiri.' },
+  clinic: { en: 'Please book a clinic visit soon and show your summary.', sw: 'Tafadhali panga kwenda kliniki hivi karibuni na uonyeshe muhtasari.' },
+  peer: { en: 'Talk to your peer champion or clinic this week about your medicine.', sw: 'Ongea na kiongozi wa kikundi au kliniki wiki hii kuhusu dawa zako.' },
+  none: { en: 'This is not a health check. If you feel worse, use Get help.', sw: 'Hiki si kipimo cha afya. Ukijisikia vibaya zaidi, tumia Msaada.' },
+};
+
+function referView() {
+  const sw = state.lang === 'sw';
+  return `<h1 tabindex="-1">${sw ? 'Orodha ya rufaa' : 'Referral checklist'}</h1>
+    <p>${sw ? 'Tumia kwa mtu ambaye ni mgonjwa au anauliza tu. Hii si kipimo cha ugonjwa, na haihifadhi chochote.' : 'Use only for someone who is unwell or asks. This does not diagnose, and nothing here is saved.'}</p>
+    <form id="refer"><fieldset><legend>${sw ? 'Hatua 1: Dalili za hatari' : 'Step 1: Danger signs'}</legend>${C.RED_FLAGS.map(f => `<label class="check"><input type="checkbox" name="danger" value="${f.id}"><span>${t(f)}</span></label>`).join('')}</fieldset>
+    <fieldset><legend>${sw ? 'Hatua 2: Shida za wiki 4 au zaidi, au zinazorudi, bila sababu inayojulikana' : 'Step 2: Problems lasting 4 weeks or more, or that keep returning, with no known cause'}</legend>${C.BODY_AREAS.map(f => `<label class="check"><input type="checkbox" name="areas" value="${f.id}"><span>${t(f)}</span></label>`).join('')}</fieldset>
+    <label class="check"><input type="checkbox" name="concern"><span>${sw ? 'Ndugu ana lupus, au nina wasiwasi mkubwa' : 'Family history of lupus, or I am very concerned'}</span></label>
+    <button class="btn">${sw ? 'Hatua inayofuata' : 'Next step'}</button></form><div id="step" role="status"></div>
+    <h2>${sw ? 'Kumbukumbu kwa mhudumu' : 'Pocket lines'}</h2><ul>${C.CHP_LINES.map(x => `<li>${t(x)}</li>`).join('')}</ul>
+    <a class="btn ghost" href="#/manual">${sw ? 'Fungua Mwongozo wa Huduma' : 'Open the Lupus Care Manual'}</a>`;
+}
+
+function manualView() {
+  const tier = sessionStorage.getItem('tier') || 'chp';
+  const sw = state.lang === 'sw';
+  return `<h1 tabindex="-1">Lupus Care Manual</h1>
+    <p class="alert">${sw ? 'Kwa wahudumu wa afya. Usibadilishe dawa kutokana na ukurasa huu.' : 'For health workers. Do not change medicine from this page.'}</p><p>${sw ? 'Rasimu kwa Kiingereza kwanza. Sura zitatafsiriwa baada ya kukaguliwa.' : 'Working draft of the ten core chapters. Choose your role.'}</p>
+    <div class="seg tiers">${Object.entries(C.TIERS).map(([k, v]) => `<button class="tier ${k === tier ? 'on' : ''}" data-tier="${k}" aria-pressed="${k === tier}">${esc(v)}</button>`).join('')}</div>
+    ${C.MANUAL.map((c, i) => `<details ${i === 0 ? 'open' : ''}><summary>${i + 1}. ${esc(c.title)}</summary><ul>${c.core.map(x => `<li>${esc(x)}</li>`).join('')}</ul>${c[tier].length ? `<p class="tierhead">${esc(C.TIERS[tier])}</p><ul>${c[tier].map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</details>`).join('')}
+    <h2>Sources</h2><ul class="small">${C.SOURCES.map(([n, u]) => `<li><a href="${esc(u)}" rel="noopener">${esc(n)}</a></li>`).join('')}</ul>
+    <button class="btn ghost" id="print">${sw ? 'Chapisha' : 'Print'}</button>`;
+}
+
+function hubView() {
+  const sw = state.lang === 'sw';
+  const month = today().slice(0, 7);
+  return `<h1 tabindex="-1">${sw ? 'Ripoti ya kikundi' : 'Hub report'}</h1>
+    <p>${sw ? 'Namba tu. Usiandike majina. Rejista ya majina inabaki kwenye karatasi kwa kiongozi wa kikundi.' : 'Numbers only. Never add names. The register stays on paper with the champion.'}</p>
+    <form id="hubform" class="stack">
+    <label>${sw ? 'Kikundi' : 'Hub'} <select name="code" required>${C.HUBS.map(h => `<option value="${h.code}">${esc(h.name)}</option>`).join('')}</select></label>
+    <label>${sw ? 'Mwezi' : 'Month'} <input type="month" name="month" value="${month}" required></label>
+    <label>${sw ? 'Waliohudhuria' : 'Attended'} <input type="number" name="attended" min="0" max="999" inputmode="numeric" required></label>
+    <label>${sw ? 'Wapya' : 'New members'} <input type="number" name="fresh" min="0" max="999" inputmode="numeric" required></label>
+    <label>${sw ? 'Wanaohitaji kufuatiliwa' : 'Need follow-up'} <input type="number" name="followUp" min="0" max="999" inputmode="numeric" required></label>
+    <label class="check"><input type="checkbox" name="shortage"><span>${sw ? 'Kuna uhaba wa dawa' : 'Medicine shortage reported'}</span></label>
+    <button class="btn">${sw ? 'Andaa ripoti' : 'Prepare report'}</button></form><p id="huberr" role="alert"></p><div id="hubout"></div>
+    ${state.hub.length ? `<h2>${sw ? 'Zilizoandaliwa kwenye simu hii' : 'Prepared on this phone'}</h2><ul>${state.hub.slice(-6).reverse().map(x => `<li><code>${esc(x)}</code></li>`).join('')}</ul>` : ''}
+    <h2>${sw ? 'Vikundi vinavyopendekezwa' : 'Proposed hubs'}</h2>
+    <p class="note">${sw ? 'Kutoka matawi ya LFA. Bado inasubiri uthibitisho wa LFA.' : 'From LFA\'s listed chapters. Order and placement await LFA\'s confirmation.'}</p>
+    <ul>${[1, 2, 3].map(w => `<li>${sw ? 'Awamu' : 'Wave'} ${w}: ${C.HUBS.filter(h => h.wave === w).map(h => esc(h.name)).join(', ')}</li>`).join('')}</ul>`;
+}
+
+function phoneView() {
+  const sw = state.lang === 'sw';
+  return `<h1 tabindex="-1">${sw ? 'SMS na USSD' : 'SMS and USSD'}</h1>
+    <p>${sw ? 'Huu ni mfano wa majaribio tu. Hakuna kinachotumwa. Huduma halisi itaendeshwa na mtoa huduma aliyeidhinishwa nchini Kenya.' : 'A simulator only. Nothing is sent. The real service will run with a licensed provider in Kenya.'}</p>
+    <div class="phones">
+    <section class="phone"><h2>USSD</h2><pre id="ussd" aria-live="polite"></pre><form id="ussdf" class="row"><input id="ussdi" inputmode="numeric" aria-label="USSD input" autocomplete="off"><button class="btn ghost">${sw ? 'Tuma' : 'Send'}</button><button class="btn ghost" type="button" id="ussdr">${sw ? 'Anza' : 'Restart'}</button></form></section>
+    <section class="phone"><h2>SMS</h2><div id="sms" aria-live="polite"></div><form id="smsf" class="row"><input id="smsi" aria-label="SMS reply" autocomplete="off" placeholder="1, 2, DHARURA, PUMZIKA, STOP"><button class="btn ghost">${sw ? 'Jibu' : 'Reply'}</button></form></section>
+    </div>
+    <p class="note">${sw ? 'Ujumbe hautaji jina la ugonjwa, kwa sababu simu nyingi hutumiwa na watu kadhaa.' : 'Messages never name the condition, because many phones are shared.'}</p>
+    <button class="btn ghost" id="pack">${sw ? 'Pakua maudhui kwa mtoa huduma' : 'Download content pack for the provider'}</button>`;
+}
+
+function teamView() {
+  const sw = state.lang === 'sw';
+  return `<h1 tabindex="-1">${sw ? 'Timu ya LFA' : 'LFA team'}</h1>
+    <p>${sw ? 'Bandika ripoti za vikundi. Zinabaki kwenye kifaa hiki.' : 'Paste hub report lines from SMS or WhatsApp. They stay on this device.'}</p>
+    <label class="stack">${sw ? 'Ripoti' : 'Reports'} <textarea id="reports" rows="6" placeholder="HUB KSM 2026-11 14 2 3 0">${esc(state.reports)}</textarea></label>
+    <div class="btns"><button id="calc" class="btn">${sw ? 'Hesabu' : 'Calculate'}</button><button id="demo" class="btn ghost">${sw ? 'Tumia data ya mfano' : 'Load sample data'}</button><button id="csv" class="btn ghost">CSV</button></div>
+    <div id="totals" role="status"></div>
+    <h2>${sw ? 'Viashiria vya mradi' : 'Project indicators'}</h2>
+    <p class="note">${sw ? 'Hakuna kilichopimwa bado. Kila kiashiria kinahitaji msingi wa kuanzia.' : 'Nothing is measured yet. Each indicator needs a baseline before it can be reported.'}</p>
+    <div class="scroll"><table><thead><tr><th>Indicator</th><th>What must be captured</th><th>Where it comes from</th></tr></thead><tbody>${C.INDICATORS.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+
+function moreView() {
+  const sw = state.lang === 'sw';
+  const items = [['#/refer', sw ? 'Wahudumu wa afya' : 'Health workers'], ['#/hub', sw ? 'Ripoti ya kikundi' : 'Hub report'], ['#/phone', 'SMS / USSD'], ['#/team', sw ? 'Timu ya LFA' : 'LFA team'], ['#/about', sw ? 'Kuhusu' : 'About']];
+  return `<h1 tabindex="-1">${l('more')}</h1><div class="cards">${items.map(([h, n]) => `<a class="card" href="${h}"><strong>${esc(n)}</strong></a>`).join('')}</div>`;
+}
+
+function aboutView() {
+  return `<h1 tabindex="-1">${esc(C.FULL_NAME)}</h1>
+    <p>A patient-led project of the Lupus Foundation of Africa. It joins four parts: a co-created mobile tool, county peer support hubs, a tiered Lupus Care Manual, and evidence led by patient stories.</p>
+    <h2>What we know, and do not know</h2>
+    <ul><li>Nobody has measured how many Kenyans have lupus. Global rates suggest tens of thousands, not hundreds of thousands.</li>
+    <li>Kenya has very few rheumatologists, around a dozen for more than 50 million people, so early care falls to frontline workers.</li>
+    <li>Diagnosis is often delayed. African studies report delays of 15 months or more. A Kenyan baseline still has to be measured.</li></ul>
+    <h2>Your privacy</h2>
+    <ul><li>No accounts, cookies or tracking.</li><li>Check-ins stay on your phone until you share or erase them.</li><li>Hub reports contain counts only, and public figures hide counts under 5.</li><li>For adults only in this release.</li></ul>
+    <h2>Status</h2>
+    <p>This is a pilot draft. It gives information and next steps, and it never diagnoses, scores or advises on doses. Clinical review, Kiswahili review and data protection steps must finish before use with real patients.</p>
+    <p>Contact: <a href="tel:${C.LFA_INTL}">${C.LFA_PHONE}</a>, <a href="https://lupusfa.org" rel="noopener">lupusfa.org</a></p>`;
+}
+
+const ROUTES = { '': home, help: helpView, learn: learnView, checkin: checkinView, refer: referView, manual: manualView, hub: hubView, phone: phoneView, team: teamView, more: moreView, about: aboutView };
+
+function render(focus = true) {
+  const route = location.hash.replace(/^#\/?/, '');
+  document.documentElement.lang = state.lang;
+  const standalone = matchMedia('(display-mode: standalone)').matches;
+  document.title = route === '' && !standalone ? C.FULL_NAME : 'PAMBANA';
+  showDraft();
+  $('#lang').textContent = state.lang === 'sw' ? 'English' : 'Kiswahili';
+  $('#theme').textContent = { auto: 'Auto', light: state.lang === 'sw' ? 'Mwanga' : 'Light', dark: state.lang === 'sw' ? 'Giza' : 'Dark' }[state.theme];
+  $('#theme').setAttribute('aria-label', state.lang === 'sw' ? 'Badilisha mwanga' : 'Change theme');
+  document.documentElement.dataset.theme = state.theme;
+  const tabs = [['#/', 'home'], ['#/checkin', 'checkin'], ['#/help', 'help'], ['#/learn', 'learn'], ['#/more', 'more']];
+  const nav = tabs.map(([h, k]) => `<a href="${h}" ${location.hash === h || (!location.hash && h === '#/') ? 'aria-current="page"' : ''}>${l(k)}</a>`).join('');
+  $('#tabs').innerHTML = nav; $('#topnav').innerHTML = nav;
+  main().innerHTML = (ROUTES[route] || home)();
+  bind(route);
+  const result = lastResult?.route === route && $(lastResult.target);
+  if (result) { result.className = lastResult.cls; result.innerHTML = lastResult.html; }
+  if (focus) scrollTo(0, 0);
+  if (focus || document.activeElement === document.body) $('h1', main())?.focus({ preventScroll: true });
+}
+
+const download = (name, body, type = 'text/plain') => {
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([body], { type })), download: name });
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+
+function showResult(route, target, cls, html, urgent) {
+  lastResult = { route, target, cls, html };
+  const box = $(target);
+  box.className = cls;
+  box.setAttribute('role', urgent ? 'alert' : 'status');
+  box.innerHTML = html;
+  box.tabIndex = -1;
+  box.focus({ preventScroll: true });
+  box.scrollIntoView({ block: 'center' });
+}
+
+function bind(route) {
+  const sw = state.lang === 'sw';
+  if (route === 'checkin') bindCheckin(sw);
+  if (route === 'refer') {
+    $('#refer').onsubmit = e => {
+      e.preventDefault();
+      const f = new FormData(e.target);
+      const s = nextStep({ danger: f.getAll('danger'), areas: f.getAll('areas'), concern: f.has('concern') });
+      showResult('refer', '#step', `result ${s.level}`, `<h2>${esc(s[state.lang].title)}</h2><p>${esc(s[state.lang].body)}</p>`, s.level === 'today');
+    };
+  }
+  if (route === 'manual') {
+    main().querySelectorAll('[data-tier]').forEach(b => { b.onclick = () => { sessionStorage.setItem('tier', b.dataset.tier); render(false); }; });
+    $('#print').onclick = () => { main().querySelectorAll('details').forEach(d => { d.open = true; }); print(); };
+  }
+  if (route === 'hub') {
+    $('#hubform').onsubmit = e => {
+      e.preventDefault();
+      const f = Object.fromEntries(new FormData(e.target));
+      if (+f.fresh > +f.attended || +f.followUp > +f.attended) { $('#huberr').textContent = sw ? 'Wapya na wanaofuatiliwa hawawezi kuzidi waliohudhuria.' : 'New members and follow-ups cannot exceed attendance.'; return; }
+      $('#huberr').textContent = '';
+      const line = hubLine({ ...f, shortage: 'shortage' in f });
+      state.hub.push(line); save();
+      const body = encodeURIComponent(line);
+      $('#hubout').innerHTML = `<p><code>${esc(line)}</code></p><div class="btns"><a class="btn" href="sms:${C.LFA_INTL}?body=${body}">SMS</a><a class="btn ghost" href="https://wa.me/${C.LFA_INTL.slice(1)}?text=${body}" rel="noopener">WhatsApp</a></div>`;
+    };
+  }
+  if (route === 'phone') bindPhone(sw);
+  if (route === 'team') bindTeam(sw);
+}
+
+function bindCheckin(sw) {
+  $('#wipe').onclick = () => {
+    if (!confirm(sw ? 'Futa data yote kwenye simu hii?' : 'Erase all data on this phone?')) return;
+    try { localStorage.removeItem(KEY); } catch { /* storage blocked: nothing to erase */ }
+    state = { ...state, entries: [], visits: [], hub: [], pin: null, reports: '' }; pinPass.ok = false; lastResult = null; save(); render();
+  };
+  if (state.pin && !pinPass.ok) {
+    $('#unlock').onsubmit = async e => {
+      e.preventDefault();
+      if (await hash($('#pin').value) === state.pin) { pinPass.ok = true; render(); } else $('#pinerr').textContent = sw ? 'PIN si sahihi.' : 'Wrong PIN.';
+    };
+    return;
+  }
+  navigator.storage?.persist?.().catch(() => {});
+  $('#diary').onsubmit = e => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const entry = { date: today(), overall: +f.get('overall'), fatigue: +f.get('fatigue'), joints: +f.get('joints'), urgent: f.getAll('urgent'), newSkin: f.has('newSkin'), missed: f.get('missed'), ranOut: f.has('ranOut') };
+    const merged = mergeEntry(state.entries.at(-1), entry);
+    if (merged !== entry) state.entries.pop();
+    state.entries.push(merged);
+    const stored = save();
+    const flag = diaryFlag(merged);
+    lastResult = null;
+    render(false);
+    showResult('checkin', '#flag', `result ${flag === 'today' ? 'today' : flag === 'none' ? 'routine' : 'soon'}`, `<p>${stored ? (sw ? 'Imehifadhiwa.' : 'Saved.') : (sw ? 'Haikuhifadhiwa kwenye simu hii.' : 'Could not save on this phone.')} ${t(FLAG_TEXT[flag])}</p>${flag === 'today' ? `<a class="btn danger" href="#/help">${l('help')}</a>` : ''}`, flag === 'today');
+  };
+  $('#visit').onsubmit = e => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    if (!f.bp && !f.kg) return;
+    state.visits.push({ date: today(), bp: f.bp, kg: f.kg }); save(); render(false);
+  };
+  $('#summary').onclick = () => {
+    const pre = $('#out');
+    const raw = q => q[state.lang];
+    const labels = { feeling: raw(Q.overall), tired: raw(Q.fatigue), joints: raw(Q.joints), missed: raw(Q.missed), ranOut: raw(Q.ranOut), newSkin: raw(Q.newSkin), scale: SCALE[state.lang], flag: id => raw(C.RED_FLAGS.find(f => f.id === id)) };
+    pre.textContent = `PAMBANA\n${clinicSummary(state.entries, labels)}\n${state.visits.slice(-4).map(v => `${v.date}: BP ${v.bp || '-'}, ${v.kg || '-'} kg`).join('\n')}`;
+    pre.hidden = false;
+  };
+  $('#setpin').onclick = async () => {
+    if (state.pin) { state.pin = null; save(); render(false); return; }
+    const pin = prompt(sw ? 'Weka PIN ya namba 4 hadi 8' : 'Choose a PIN of 4 to 8 digits');
+    if (pin === null) return;
+    if (!/^\d{4,8}$/.test(pin)) { alert(sw ? 'PIN haikuwekwa. Tumia namba 4 hadi 8.' : 'PIN not set. Use 4 to 8 digits.'); return; }
+    state.pin = await hash(pin); pinPass.ok = true; save(); render(false);
+  };
+}
+
+function bindPhone(sw) {
+  let path = [];
+  const week = Math.floor(Date.now() / 6048e5);
+  const show = () => { const r = ussd(path.join('*'), week); $('#ussd').textContent = r.slice(4); $('#ussdf button').disabled = r.startsWith('END'); };
+  show();
+  $('#ussdf').onsubmit = e => { e.preventDefault(); const v = $('#ussdi').value.trim(); if (v) path.push(v); $('#ussdi').value = ''; show(); };
+  $('#ussdr').onclick = () => { path = []; show(); };
+  const log = $('#sms');
+  const push = (who, text) => { const p = document.createElement('p'); p.className = `bubble ${who}`; p.textContent = text; log.append(p); log.scrollTop = log.scrollHeight; };
+  push('in', C.CHECKIN[state.lang]);
+  $('#smsf').onsubmit = e => {
+    e.preventDefault();
+    const v = $('#smsi').value.trim(); if (!v) return;
+    push('out', v); $('#smsi').value = '';
+    const r = smsReply(v, state.lang);
+    push('in', r.reply);
+    if (r.queue) push('sys', sw ? 'Mfano: mhudumu wa LFA ataarifiwa kupiga simu.' : 'Simulation: a named LFA responder would be asked to call.');
+  };
+  $('#pack').onclick = () => download('pambana-sms-ussd-pack.json', JSON.stringify({ status: 'DRAFT, needs clinical and Kiswahili sign-off', checkin: C.CHECKIN, danger: C.DANGER_SMS, tips: C.TIPS }, null, 2), 'application/json');
+}
+
+function bindTeam(sw) {
+  const run = sample => {
+    if (!sample) { state.reports = $('#reports').value; save(); }
+    const { reports, rejected } = collectHubReports(sample || state.reports);
+    const s = hubTotals(reports);
+    $('#totals').innerHTML = `<div class="stats">${[[sw ? 'Vikundi' : 'Hubs reporting', s.hubs.size], [sw ? 'Ripoti' : 'Reports', s.sessions], [sw ? 'Mahudhurio' : 'Attendances', s.attended], [sw ? 'Wapya' : 'New members', s.fresh], [sw ? 'Ufuatiliaji' : 'Follow-ups', s.followUp], [sw ? 'Uhaba wa dawa' : 'Shortage reports', s.shortages]].map(([k, v]) => `<div><b>${esc(suppress(v))}</b><span>${k}</span></div>`).join('')}</div>
+      <p class="note">${sw ? 'Namba chini ya 5 zimefichwa.' : 'Counts under 5 are hidden.'}</p>
+      ${rejected.length ? `<p role="alert">${sw ? 'Hazikusomeka' : 'Could not read'}: ${rejected.map(esc).join('; ')}</p>` : ''}`;
+    return reports;
+  };
+  $('#calc').onclick = () => run();
+  $('#demo').onclick = () => { run('HUB NBO 2026-10 18 3 4 0\nHUB KSM 2026-10 14 2 3 1\nHUB MSA 2026-10 11 2 2 0'); $('#totals').insertAdjacentHTML('afterbegin', `<p class="alert">${sw ? 'Hii ni data ya mfano, si matokeo halisi.' : 'This is sample data, not real results.'}</p>`); };
+  $('#csv').onclick = () => download('pambana-hub-reports.csv', reportsCsv(run()), 'text/csv');
+}
+
+$('#lang').onclick = () => { state.lang = state.lang === 'sw' ? 'en' : 'sw'; save(); render(false); };
+$('#theme').onclick = () => { state.theme = { auto: 'light', light: 'dark', dark: 'auto' }[state.theme]; save(); render(false); };
+$('.skip').onclick = e => { e.preventDefault(); main().focus(); };
+addEventListener('storage', e => { if (e.key === KEY) { state = { ...state, entries: [], visits: [], hub: [], pin: null, reports: '', ...load() }; render(false); } });
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden || !state.pin || !pinPass.ok) return;
+  pinPass.ok = false;
+  if (location.hash === '#/checkin' && !$('#diary input:checked')) render(false);
+});
+addEventListener('hashchange', () => render());
+render(false);
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});

@@ -1,0 +1,6 @@
+{
+  "name": "pambana",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test", "stamp": "node test/stamp.js write" }
+}
