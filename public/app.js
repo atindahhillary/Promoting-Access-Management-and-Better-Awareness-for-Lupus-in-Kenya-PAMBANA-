@@ -1,4 +1,5 @@
 import * as C from './content.js';
+import { NAME as BOT, open as openChat, respond as chatRespond } from './companion.js';
 import { ussd, smsReply, nextStep, diaryFlag, mergeEntry, hubLine, collectHubReports, hubTotals, suppress, reportsCsv, clinicSummary } from './logic.js';
 
 const KEY = 'pambana.v1';
@@ -42,6 +43,7 @@ const ICONS = {
   chart: 'M4 20V10M10 20V4M16 20v-8M22 20H2',
   info: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v5M12 8v.01',
   go: 'M7 17L17 7M9 7h8v8',
+  chat: 'M21 12a8 8 0 0 1-11.5 7.2L4 20l1-4.5A8 8 0 1 1 21 12zM8.5 12h.01M12 12h.01M15.5 12h.01',
 };
 const icon = n => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="${ICONS[n]}"/></svg>`;
 
@@ -90,7 +92,7 @@ function home() {
     ${weekStrip()}
     <nav class="quick" aria-label="${l('who')}">
       <a href="#/checkin"><span class="ico">${icon('check')}</span>${l('checkin')}</a>
-      <a href="#/help"><span class="ico alertic">${icon('alert')}</span>${l('help')}</a>
+      <a href="#/companion"><span class="ico">${icon('chat')}</span>${sw ? 'Mwenza' : 'Companion'}</a>
       <a href="#/learn"><span class="ico">${icon('book')}</span>${l('learn')}</a>
       <a href="#/refer"><span class="ico">${icon('health')}</span>${sw ? 'Wahudumu' : 'Health workers'}</a></nav>
     <h2>${sw ? 'Mkutano ujao wa kikundi' : 'Next group meeting'}</h2>
@@ -241,7 +243,7 @@ function teamView() {
 
 function moreView() {
   const sw = state.lang === 'sw';
-  const items = [['#/refer', 'health', sw ? 'Wahudumu wa afya' : 'Health workers'], ['#/hub', 'users', sw ? 'Ripoti ya kikundi' : 'Hub report'], ['#/phone', 'phone', 'SMS / USSD'], ['#/team', 'chart', sw ? 'Timu ya LFA' : 'LFA team'], ['#/about', 'info', sw ? 'Kuhusu' : 'About']];
+  const items = [['#/companion', 'chat', BOT[state.lang]], ['#/refer', 'health', sw ? 'Wahudumu wa afya' : 'Health workers'], ['#/hub', 'users', sw ? 'Ripoti ya kikundi' : 'Hub report'], ['#/phone', 'phone', 'SMS / USSD'], ['#/team', 'chart', sw ? 'Timu ya LFA' : 'LFA team'], ['#/about', 'info', sw ? 'Kuhusu' : 'About']];
   return `<h1 tabindex="-1">${l('more')}</h1><div class="grid2">${items.map(([h, ic, n]) => `<a class="tile" href="${h}"><span class="ico">${icon(ic)}</span><strong>${esc(n)}</strong><span class="go">${icon('go')}</span></a>`).join('')}</div>`;
 }
 
@@ -259,7 +261,64 @@ function aboutView() {
     <p>Contact: <a href="tel:${C.LFA_INTL}">${C.LFA_PHONE}</a>, <a href="https://lupusfa.org" rel="noopener">lupusfa.org</a></p>`;
 }
 
-const ROUTES = { '': home, help: helpView, learn: learnView, checkin: checkinView, refer: referView, manual: manualView, hub: hubView, phone: phoneView, team: teamView, more: moreView, about: aboutView };
+// The Warrior Companion: scripted, bilingual, and kept in memory only (never stored or sent).
+let chat = null;
+const chatCtx = () => ({
+  name: state.profile?.name || '', lang: state.lang, today: today(),
+  meeting: nextMeeting().toLocaleDateString(state.lang === 'sw' ? 'sw-KE' : 'en-KE', { weekday: 'long', day: 'numeric', month: 'long' }),
+  checkedInToday: state.entries.at(-1)?.date === today(),
+});
+
+function companionView() {
+  const sw = state.lang === 'sw';
+  return `<h1 tabindex="-1">${esc(BOT[state.lang])}</h1>
+    <p class="note">${sw ? 'Msaidizi wa kuongoza, si daktari wala mtu. Mazungumzo hayahifadhiwi wala kutumwa popote. Kwa dharura, nenda hospitali.' : 'A guided helper, not a doctor and not a person. Chats are not saved or sent anywhere. In an emergency, go to a hospital.'}</p>
+    <div id="chat" class="chat" role="log" aria-live="polite" aria-label="${esc(BOT[state.lang])}"></div>
+    <div id="chips" class="chips"></div>
+    <form id="chatform" class="row"><input id="chatin" maxlength="300" autocomplete="off" aria-label="${sw ? 'Andika ujumbe' : 'Type a message'}" placeholder="${sw ? 'Andika hapa, kwa Kiswahili au English' : 'Type here, in English or Kiswahili'}"><button class="btn">${sw ? 'Tuma' : 'Send'}</button></form>
+    <div class="btns"><a class="btn danger" href="#/help">${l('help')}</a><button id="chatreset" class="btn ghost">${sw ? 'Mazungumzo mapya' : 'New chat'}</button></div>`;
+}
+
+function bindCompanion() {
+  const sw = state.lang === 'sw';
+  const paint = () => {
+    const log = $('#chat');
+    log.replaceChildren(...chat.log.map(b => { const p = document.createElement('p'); p.className = `bubble ${b.who === 'bot' ? 'in' : 'out'}`; p.textContent = b.text; return p; }));
+    log.scrollTop = log.scrollHeight;
+    $('#chips').replaceChildren(...chat.chips.map(c => {
+      const el = document.createElement(c.href ? 'a' : 'button');
+      el.className = 'chip'; el.textContent = c.label;
+      if (c.href) el.href = c.href; else { el.type = 'button'; el.onclick = () => send({ chip: c.id }, c.label); }
+      return el;
+    }));
+  };
+  const pushBot = messages => { for (const m of messages) chat.log.push({ who: 'bot', text: m.text }); chat.chips = messages.at(-1)?.chips || []; };
+  const send = (input, shown) => {
+    chat.log.push({ who: 'you', text: shown });
+    const r = chatRespond(chat.session, input, chatCtx());
+    chat.session = r.session;
+    if (r.entry) {
+      const merged = mergeEntry(state.entries.at(-1), r.entry);
+      if (merged !== r.entry) state.entries.pop();
+      state.entries.push(merged);
+      if (!save()) r.messages.push({ text: sw ? 'Sikuweza kuhifadhi ukaguzi huu kwenye simu hii. Tafadhali jaribu tena kwenye ukurasa wa Hali yangu.' : 'I could not save this check-in on your phone. Please try again on the Check-in page.', chips: r.messages.at(-1).chips });
+    }
+    pushBot(r.messages);
+    paint();
+  };
+  if (!chat) { const r = openChat(chatCtx()); chat = { session: r.session, log: [], chips: [] }; pushBot(r.messages); }
+  paint();
+  $('#chatform').onsubmit = e => {
+    e.preventDefault();
+    const v = $('#chatin').value.trim();
+    if (!v) return;
+    $('#chatin').value = '';
+    send({ text: v }, v);
+  };
+  $('#chatreset').onclick = () => { chat = null; render(false); };
+}
+
+const ROUTES = { '': home, companion: companionView, help: helpView, learn: learnView, checkin: checkinView, refer: referView, manual: manualView, hub: hubView, phone: phoneView, team: teamView, more: moreView, about: aboutView };
 
 function render(focus = true) {
   const route = location.hash.replace(/^#\/?/, '');
@@ -325,6 +384,7 @@ function bind(route) {
       $('#hubout').innerHTML = `<p><code>${esc(line)}</code></p><div class="btns"><a class="btn" href="sms:${C.LFA_INTL}?body=${body}">SMS</a><a class="btn ghost" href="https://wa.me/${C.LFA_INTL.slice(1)}?text=${body}" rel="noopener">WhatsApp</a></div>`;
     };
   }
+  if (route === 'companion') bindCompanion();
   if (route === 'phone') bindPhone(sw);
   if (route === 'team') bindTeam(sw);
 }
@@ -414,7 +474,7 @@ function bindTeam(sw) {
   $('#csv').onclick = () => download('pambana-hub-reports.csv', reportsCsv(run()), 'text/csv');
 }
 
-$('#lang').onclick = () => { state.lang = state.lang === 'sw' ? 'en' : 'sw'; save(); render(false); };
+$('#lang').onclick = () => { state.lang = state.lang === 'sw' ? 'en' : 'sw'; if (chat) chat.session.lang = state.lang; save(); render(false); };
 $('#theme').onclick = () => { state.theme = { auto: 'light', light: 'dark', dark: 'auto' }[state.theme]; save(); render(false); };
 $('.skip').onclick = e => { e.preventDefault(); main().focus(); };
 addEventListener('storage', e => { if (e.key === KEY) { state = { ...state, entries: [], visits: [], hub: [], pin: null, reports: '', ...load() }; render(false); } });
