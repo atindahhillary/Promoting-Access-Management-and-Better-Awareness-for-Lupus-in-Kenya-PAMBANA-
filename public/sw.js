@@ -1,6 +1,6 @@
 // Cache first, updated only as a whole set, so a weak signal can never leave
 // mismatched modules. VERSION is a hash of the files: run `npm run stamp`.
-const VERSION = 'pambana-df4dec69';
+const VERSION = 'pambana-1aa3d6ac';
 const FILES = ['/', '/index.html', '/app.css', '/app.js', '/logic.js', '/content.js', '/inter.woff2', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/img/banner.jpg', '/img/hub.jpg', '/img/learn.jpg', '/img/community.jpg'];
 
 self.addEventListener('install', e => {

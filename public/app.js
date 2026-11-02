@@ -20,7 +20,7 @@ const today = () => new Date().toLocaleDateString('en-CA');
 
 const L = {
   home: { en: 'Home', sw: 'Mwanzo' }, checkin: { en: 'Check-in', sw: 'Hali yangu' }, help: { en: 'Get help', sw: 'Msaada' }, learn: { en: 'Learn', sw: 'Jifunze' }, more: { en: 'More', sw: 'Zaidi' },
-  tagline: { en: 'Pambana means fight and overcome. This tool helps you know the warning signs, keep track of how you are, and reach people who understand.', sw: 'Pambana ni kupigana na kushinda. Zana hii inakusaidia kujua dalili za hatari, kufuatilia hali yako, na kuwafikia wanaokuelewa.' },
+  tagline: { en: 'Know the warning signs, keep track of how you are, and reach people who understand. You are not fighting alone.', sw: 'Jua dalili za hatari, fuatilia hali yako, na uwafikie wanaokuelewa. Hupigani peke yako.' },
   who: { en: 'What do you need today?', sw: 'Unahitaji nini leo?' },
   noPhone: { en: 'No smartphone? PAMBANA is designed to work by SMS and USSD on any phone. Those services start once a licensed provider is in place.', sw: 'Huna simu janja? PAMBANA imeundwa kufanya kazi kwa SMS na USSD kwenye simu yoyote. Huduma hizi zitaanza baada ya kupata mtoa huduma aliyeidhinishwa.' },
   privacy: { en: 'Your check-ins stay on this phone. PAMBANA has no accounts and no patient database.', sw: 'Taarifa zako zinabaki kwenye simu hii. PAMBANA haina akaunti wala hifadhidata ya wagonjwa.' },
@@ -84,7 +84,7 @@ function home() {
   const loc = sw ? 'sw-KE' : 'en-KE';
   const tile = (h, ic, a, b) => `<a class="tile" href="${h}"><span class="ico">${icon(ic)}</span><strong>${esc(a)}</strong><span class="s">${esc(b)}</span><span class="go">${icon('go')}</span></a>`;
   return `<div class="greet"><span class="avatar" aria-hidden="true">P</span><div><small>${sw ? 'Habari' : 'Hello'}</small><strong>${sw ? 'Karibu PAMBANA' : 'Welcome to PAMBANA'}</strong></div></div>
-    <section class="banner"><span class="eyebrow">${sw ? 'Pambana: pigana na ushinde' : 'Pambana: fight and overcome'}</span>
+    <section class="banner"><p class="hook"><b>Pambana!</b> <span>${sw ? 'Tushinde pamoja.' : 'Fight on, and overcome together.'}</span></p>
       <h1 tabindex="-1">${esc(C.FULL_NAME)}</h1><p>${l('tagline')}</p><a class="btn danger" href="#/help">${l('help')}</a></section>
     <p class="credit">${sw ? 'Picha: Raymond Kiunga, Siku ya Lupus Duniani 2026, Nairobi' : 'Photo: Raymond Kiunga, World Lupus Day 2026, Nairobi'}</p>
     ${weekStrip()}

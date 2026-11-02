@@ -86,7 +86,9 @@ pre { white-space: pre-wrap; background: var(--tint); padding: 12px; border-radi
 .avatar { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; background: var(--brand); color: var(--on-brand); font-weight: 800; flex: none; }
 .banner { position: relative; overflow: hidden; border-radius: 26px; padding: 22px 20px; min-height: 270px; display: flex; flex-direction: column; justify-content: center; box-shadow: var(--shadow); background: var(--tint) url(/img/banner.jpg) center / cover; isolation: isolate; }
 .banner::before { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(var(--scrim)); }
-.banner .eyebrow { font-size: .8rem; font-weight: 700; letter-spacing: .02em; color: var(--brand); text-transform: uppercase; }
+.banner .hook { margin: 0 0 4px; color: var(--brand); font-weight: 800; letter-spacing: -.03em; line-height: 1.05; }
+.banner .hook b { display: block; font-size: 2.6rem; letter-spacing: -.05em; }
+.banner .hook span { font-size: 1.25rem; }
 .banner h1 { font-size: 1.3rem; margin: .3em 0 .4em; max-width: 24ch; }
 .banner p { margin: 0 0 14px; color: var(--soft); max-width: 34ch; font-size: .95rem; }
 .banner .btn { align-self: flex-start; }
