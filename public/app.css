@@ -134,3 +134,6 @@ pre { white-space: pre-wrap; background: var(--tint); padding: 12px; border-radi
 .photo { width: 100%; aspect-ratio: 3 / 2; object-fit: cover; border-radius: var(--r); margin: 6px 0 4px; box-shadow: var(--shadow); }
 @media (min-width: 640px) { .banner { padding: 34px; min-height: 300px; } .banner h1 { font-size: 1.7rem; max-width: 26ch; } .quick .ico { width: 52px; height: 52px; } .grid2 { grid-template-columns: repeat(4, 1fr); } }
 @media print { .bar, .tabs, .btn, .tiers { display: none; } details { border: 0; } }
+
+.banner .btn .ic { width: 20px; height: 20px; margin-right: 8px; }
+.banner .quiet { align-self: flex-start; margin-top: 10px; padding: 10px 0; font-weight: 600; color: var(--brand); }

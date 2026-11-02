@@ -68,53 +68,15 @@ function nextMeeting(now = new Date()) {
   }
 }
 
-function weekStrip() {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
-  const done = new Set(state.entries.map(e => e.date));
-  const loc = state.lang === 'sw' ? 'sw-KE' : 'en-KE';
-  return `<div class="week" role="group" aria-label="${state.lang === 'sw' ? 'Wiki hii' : 'This week'}">${[...Array(7)].map((_, i) => {
-    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
-    const iso = d.toLocaleDateString('en-CA');
-    const cls = `${done.has(iso) ? 'done' : ''} ${iso === today() ? 'now' : ''}`;
-    const label = `${d.toLocaleDateString(loc, { weekday: 'long', day: 'numeric', month: 'long' })}${done.has(iso) ? `, ${state.lang === 'sw' ? 'umejaza' : 'checked in'}` : ''}`;
-    return `<a href="#/checkin" class="${cls}" aria-label="${esc(label)}"><span>${state.lang === 'sw' ? ['Jtatu', 'Jnne', 'Jtano', 'Alh', 'Ijm', 'Jmosi', 'Jpili'][i] : esc(d.toLocaleDateString(loc, { weekday: 'short' }))}</span><b>${d.getDate()}</b><i class="dot"></i></a>`;
-  }).join('')}</div>`;
-}
-
 function home() {
   const sw = state.lang === 'sw';
-  const unlocked = !locked();
-  const who = unlocked ? state.profile?.name || '' : '';
-  const last = unlocked ? state.entries.at(-1) : undefined;
-  const m = nextMeeting();
-  const loc = sw ? 'sw-KE' : 'en-KE';
-  const tile = (h, ic, a, b) => `<a class="tile" href="${h}"><span class="ico">${icon(ic)}</span><strong>${esc(a)}</strong><span class="s">${esc(b)}</span><span class="go">${icon('go')}</span></a>`;
+  const who = !locked() && state.profile ? state.profile.name : '';
   return `<div class="greet"><span class="avatar" aria-hidden="true">${esc((who || 'P')[0].toUpperCase())}</span><div><small>${sw ? 'Habari' : 'Hello'}${who ? `, ${esc(who)}` : ''}</small><strong>${sw ? 'Karibu PAMBANA' : 'Welcome to PAMBANA'}</strong></div></div>
     <section class="banner"><p class="hook"><b>Pambana!</b> <span>${sw ? 'Tushinde pamoja.' : 'Fight on, and overcome together.'}</span></p>
-      <h1 tabindex="-1">${esc(C.FULL_NAME)}</h1><p>${l('tagline')}</p><a class="btn danger" href="#/help">${l('help')}</a></section>
-    <p class="credit">${sw ? 'Picha: Raymond Kiunga, Siku ya Lupus Duniani 2026, Nairobi' : 'Photo: Raymond Kiunga, World Lupus Day 2026, Nairobi'}</p>
-    ${unlocked ? weekStrip() : ''}
-    <nav class="quick" aria-label="${l('who')}">
-      <a href="#/checkin"><span class="ico">${icon('check')}</span>${l('checkin')}</a>
-      <a href="#/companion"><span class="ico">${icon('chat')}</span>${sw ? 'Mwenza' : 'Companion'}</a>
-      <a href="#/learn"><span class="ico">${icon('book')}</span>${l('learn')}</a>
-      <a href="#/refer"><span class="ico">${icon('health')}</span>${sw ? 'Wahudumu' : 'Health workers'}</a></nav>
-    <h2>${sw ? 'Mkutano ujao wa kikundi' : 'Next group meeting'}</h2>
-    <div class="meet"><div class="when"><b>${m.getDate()}</b><span>${esc(m.toLocaleDateString(loc, { month: 'short' }))}</span></div>
-      <div><strong>${esc(m.toLocaleDateString(loc, { weekday: 'long', day: 'numeric', month: 'long' }))}</strong>
-      <p>${sw ? 'LFA hukutana Jumamosi ya mwisho ya kila mwezi. Piga' : 'LFA meets on the last Saturday of every month. Call'} <a href="tel:${C.LFA_INTL}">${C.LFA_PHONE}</a> ${sw ? 'kupata saa na mahali.' : 'for time and place.'}</p></div></div>
-    <h2>${sw ? 'Ukaguzi wako wa mwisho' : 'Your last check-in'}</h2>
-    ${last ? `<div class="stat3"><div>${t(Q.overall)}<b>${esc(SCALE[state.lang][last.overall])}</b></div><div>${t(Q.fatigue)}<b>${esc(SCALE[state.lang][last.fatigue])}</b></div><div>${t(Q.joints)}<b>${esc(SCALE[state.lang][last.joints])}</b></div></div>
-      <p class="note">${esc(last.date)}. ${esc(FLAG_TEXT.none[state.lang])}</p>` : `<p class="note">${unlocked ? `${sw ? 'Bado hujajaza. Dakika moja kwa wiki inatosha.' : 'None yet. One minute a week is enough.'} <a href="#/checkin">${l('checkin')}</a>` : `<a href="#/account">${sw ? 'Ingia ili uone ukaguzi wako' : 'Log in to see your check-ins'}</a>`}</p>`}
-    <h2>${l('who')}</h2>
-    <div class="grid2">${tile('#/hub', 'users', sw ? 'Naongoza kikundi' : 'I run a peer hub', sw ? 'Tuma namba za mwezi' : 'Send monthly numbers')}
-      ${tile('#/phone', 'phone', sw ? 'Natumia simu ya kawaida' : 'I use a basic phone', sw ? 'SMS na USSD' : 'SMS and USSD')}
-      ${tile('#/team', 'chart', sw ? 'Nafanya kazi na LFA' : 'I work with LFA', sw ? 'Jumla na viashiria' : 'Totals and indicators')}
-      ${hasLogin() ? tile('#/account', unlocked ? 'user' : 'lock', unlocked ? (sw ? 'Wasifu wangu' : 'My profile') : (sw ? 'Ingia' : 'Log in'), sw ? 'Faragha, kwenye simu hii' : 'Private, on this phone') : tile('#/account', 'user', sw ? 'Fungua wasifu' : 'Create a profile', sw ? 'Jina na PIN, hakuna barua pepe' : 'Nickname and PIN, no email')}</div>
-    <section class="band"><h2>${sw ? 'Hauko peke yako' : 'You are not alone'}</h2><p>${sw ? 'Vikundi vya wenzao vinavyoongozwa na watu wanaoishi na lupus vinaanza katika matawi 10 ya LFA.' : 'Peer groups led by people who live with lupus are starting across LFA\'s 10 chapters.'}</p>
-      <div class="btns"><a class="btn" href="#/hub">${sw ? 'Vikundi' : 'Peer hubs'}</a><a class="btn ghost" href="tel:${C.LFA_INTL}">${sw ? 'Piga LFA' : 'Call LFA'}</a></div></section>
-    <p class="note">${l('noPhone')}</p><p class="note">${l('privacy')}</p>`;
+      <h1 tabindex="-1">${esc(C.FULL_NAME)}</h1><p>${l('tagline')}</p>
+      <a class="btn" href="#/companion">${icon('chat')}${sw ? 'Ongea na Mwenza Shujaa' : 'Chat with The Warrior Companion'}</a>
+      <a class="quiet" href="#/help">${sw ? 'Dalili za hatari' : 'Danger signs'}</a></section>
+    <p class="note">${l('privacy')}</p>`;
 }
 
 function helpView() {
@@ -256,6 +218,7 @@ function aboutView() {
     <ul><li>No online accounts, cookies or tracking. A profile is only a nickname and PIN kept on your phone.</li><li>Check-ins stay on your phone until you share or erase them.</li><li>Hub reports contain counts only, and public figures hide counts under 5.</li><li>For adults only in this release.</li></ul>
     <h2>Status</h2>
     <p>This is a pilot draft. It gives information and next steps, and it never diagnoses, scores or advises on doses. Clinical review, Kiswahili review and data protection steps must finish before use with real patients.</p>
+    <p class="note">Photographs: Raymond Kiunga, World Lupus Day 2026, Nairobi.</p>
     <p>Contact: <a href="tel:${C.LFA_INTL}">${C.LFA_PHONE}</a>, <a href="https://lupusfa.org" rel="noopener">lupusfa.org</a></p>`;
 }
 
@@ -581,7 +544,7 @@ addEventListener('hashchange', () => render());
 function nudge() {
   try { if (sessionStorage.getItem('nudged')) return; } catch { /* storage blocked: show it anyway */ }
   const route = location.hash.replace(/^#\/?/, '');
-  if (route === 'companion') return;
+  if (route === 'companion' || route === '') return; // home already has the big chat button
   const sw = state.lang === 'sw';
   const name = !locked() && state.profile ? `, ${state.profile.name}` : '';
   const box = $('#nudge');
