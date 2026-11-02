@@ -440,6 +440,10 @@ function render(focus = true) {
   const ac = $('#acct');
   ac.innerHTML = icon(locked() ? 'lock' : 'user');
   ac.setAttribute('aria-label', !hasLogin() ? (state.lang === 'sw' ? 'Fungua wasifu au ingia' : 'Create a profile or log in') : locked() ? (state.lang === 'sw' ? 'Ingia' : 'Log in') : `${state.lang === 'sw' ? 'Wasifu' : 'Profile'}: ${state.profile.name}`);
+  const bot = $('#bot');
+  bot.hidden = route === 'companion';
+  bot.innerHTML = icon('chat');
+  bot.setAttribute('aria-label', BOT[state.lang]);
   const result = lastResult?.route === route && $(lastResult.target);
   if (result) { result.className = lastResult.cls; result.innerHTML = lastResult.html; }
   if (focus) scrollTo(0, 0);
@@ -572,5 +576,23 @@ document.addEventListener('visibilitychange', () => {
   if (!$('#diary input:checked')) render(false);
 });
 addEventListener('hashchange', () => render());
+
+// A short pop-up greeting from the Companion, once per visit, so it is not missed.
+function nudge() {
+  try { if (sessionStorage.getItem('nudged')) return; } catch { /* storage blocked: show it anyway */ }
+  const route = location.hash.replace(/^#\/?/, '');
+  if (route === 'companion') return;
+  const sw = state.lang === 'sw';
+  const name = !locked() && state.profile ? `, ${state.profile.name}` : '';
+  const box = $('#nudge');
+  const close = () => { box.hidden = true; try { sessionStorage.setItem('nudged', '1'); } catch { /* ignore */ } };
+  $('#nudgego').textContent = sw ? `Habari${name}! Mimi ni ${BOT.sw}. Hali yako leo?` : `Hello${name}! I am ${BOT.en}. How are you today?`;
+  $('#nudgego').onclick = close;
+  $('#nudgex').onclick = close;
+  $('#bot').addEventListener('click', close);
+  setTimeout(() => { if (!sessionStorage.getItem('nudged') && location.hash !== '#/companion') box.hidden = false; }, 1200);
+  setTimeout(close, 16000);
+}
 render(false);
+nudge();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});

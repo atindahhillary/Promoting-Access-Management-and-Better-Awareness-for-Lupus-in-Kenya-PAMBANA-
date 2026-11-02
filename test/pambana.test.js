@@ -156,3 +156,10 @@ test('every precached file exists', () => {
   const files = JSON.parse(sw.match(/FILES = (\[.*?\])/s)[1].replace(/'/g, '"'));
   for (const f of files.filter(x => x !== '/')) assert.ok(existsSync(`public${f}`), f);
 });
+
+test('the Companion launcher and its greeting are on every page', () => {
+  const html = readFileSync('public/index.html', 'utf8');
+  assert.match(html, /id="bot"[^>]*href="#\/companion"|href="#\/companion"[^>]*id="bot"/);
+  assert.match(html, /id="nudge"/);
+  assert.doesNotMatch(readFileSync('public/app.js', 'utf8').match(/function nudge[\s\S]*?\n\}/)[0], /fetch|XMLHttp/);
+});
