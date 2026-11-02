@@ -1,10 +1,11 @@
 // The service worker version is a hash of the site, so updates are never forgotten.
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 
 export function versionOf() {
   const h = createHash('sha256');
-  for (const f of readdirSync('public').filter(n => n !== 'sw.js').sort()) h.update(readFileSync(`public/${f}`));
+  const files = readdirSync('public', { recursive: true }).filter(n => n !== 'sw.js' && statSync(`public/${n}`).isFile());
+  for (const f of files.sort()) h.update(readFileSync(`public/${f}`));
   return `pambana-${h.digest('hex').slice(0, 8)}`;
 }
 

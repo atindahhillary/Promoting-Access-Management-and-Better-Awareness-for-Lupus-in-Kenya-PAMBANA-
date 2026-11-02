@@ -19,7 +19,6 @@ const t = pair => esc(pair[state.lang] ?? pair.en);
 const today = () => new Date().toLocaleDateString('en-CA');
 
 const L = {
-  draft: { en: 'Pilot draft. Health content is awaiting clinician review. Do not rely on it for care yet.', sw: 'Rasimu ya majaribio. Maudhui ya afya yanasubiri kukaguliwa na madaktari. Usiyategemee kwa matibabu bado.' },
   home: { en: 'Home', sw: 'Mwanzo' }, checkin: { en: 'Check-in', sw: 'Hali yangu' }, help: { en: 'Get help', sw: 'Msaada' }, learn: { en: 'Learn', sw: 'Jifunze' }, more: { en: 'More', sw: 'Zaidi' },
   tagline: { en: 'Pambana means fight and overcome. This tool helps you know the warning signs, keep track of how you are, and reach people who understand.', sw: 'Pambana ni kupigana na kushinda. Zana hii inakusaidia kujua dalili za hatari, kufuatilia hali yako, na kuwafikia wanaokuelewa.' },
   who: { en: 'What do you need today?', sw: 'Unahitaji nini leo?' },
@@ -29,7 +28,22 @@ const L = {
   back: { en: 'Back', sw: 'Rudi' }, save: { en: 'Save', sw: 'Hifadhi' },
 };
 const l = k => esc(L[k][state.lang]);
-function showDraft() { $('#draft').textContent = L.draft[state.lang] + (saveFailed ? ` ${L.saveFail[state.lang]}` : ''); }
+function showDraft() { const b = $('#draft'); b.textContent = saveFailed ? L.saveFail[state.lang] : ''; b.hidden = !saveFailed; }
+
+const ICONS = {
+  home: 'M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10',
+  check: 'M9 11l3 3 8-8M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9',
+  alert: 'M12 3l9 16H3L12 3zM12 10v4M12 17.5v.01',
+  book: 'M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2V5zM4 19a2 2 0 0 1 2-2h13',
+  more: 'M5 12h.01M12 12h.01M19 12h.01',
+  health: 'M12 21s-8-5-8-11a4.5 4.5 0 0 1 8-2.8A4.5 4.5 0 0 1 20 10c0 6-8 11-8 11zM8 11h2l1-2 2 4 1-2h2',
+  users: 'M16 20v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9.5 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7M21 20v-1a4 4 0 0 0-3-3.9M16 4.1a3.5 3.5 0 0 1 0 6.8',
+  phone: 'M8 3h8a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM11 18h2',
+  chart: 'M4 20V10M10 20V4M16 20v-8M22 20H2',
+  info: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v5M12 8v.01',
+  go: 'M7 17L17 7M9 7h8v8',
+};
+const icon = n => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="${ICONS[n]}"/></svg>`;
 
 const CARDS = [
   ['#/checkin', { en: 'I live with lupus', sw: 'Ninaishi na lupus' }, { en: 'Weekly check-in and a summary for your clinic', sw: 'Ukaguzi wa wiki na muhtasari wa kliniki' }],
@@ -40,13 +54,60 @@ const CARDS = [
   ['#/team', { en: 'I work with LFA', sw: 'Nafanya kazi na LFA' }, { en: 'Hub totals and project indicators', sw: 'Jumla za vikundi na viashiria' }],
 ];
 
+// Last Saturday of the month, as LFA's in-person meeting; time and venue are not published.
+function nextMeeting(now = new Date()) {
+  for (let m = now.getMonth(); ; m++) {
+    const d = new Date(now.getFullYear(), m + 1, 0);
+    d.setDate(d.getDate() - ((d.getDay() + 1) % 7));
+    if (d >= new Date(now.getFullYear(), now.getMonth(), now.getDate())) return d;
+  }
+}
+
+function weekStrip() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
+  const done = new Set(state.entries.map(e => e.date));
+  const loc = state.lang === 'sw' ? 'sw-KE' : 'en-KE';
+  return `<div class="week" role="group" aria-label="${state.lang === 'sw' ? 'Wiki hii' : 'This week'}">${[...Array(7)].map((_, i) => {
+    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    const iso = d.toLocaleDateString('en-CA');
+    const cls = `${done.has(iso) ? 'done' : ''} ${iso === today() ? 'now' : ''}`;
+    const label = `${d.toLocaleDateString(loc, { weekday: 'long', day: 'numeric', month: 'long' })}${done.has(iso) ? `, ${state.lang === 'sw' ? 'umejaza' : 'checked in'}` : ''}`;
+    return `<a href="#/checkin" class="${cls}" aria-label="${esc(label)}"><span>${state.lang === 'sw' ? ['Jtatu', 'Jnne', 'Jtano', 'Alh', 'Ijm', 'Jmosi', 'Jpili'][i] : esc(d.toLocaleDateString(loc, { weekday: 'short' }))}</span><b>${d.getDate()}</b><i class="dot"></i></a>`;
+  }).join('')}</div>`;
+}
+
 function home() {
-  return `<section class="hero"><h1 tabindex="-1">${esc(C.FULL_NAME)}</h1><p class="lead">${l('tagline')}</p>
-    <a class="btn danger" href="#/help">${l('help')}</a></section>
+  const sw = state.lang === 'sw';
+  const last = state.entries.at(-1);
+  const m = nextMeeting();
+  const loc = sw ? 'sw-KE' : 'en-KE';
+  const tile = (h, ic, a, b) => `<a class="tile" href="${h}"><span class="ico">${icon(ic)}</span><strong>${esc(a)}</strong><span class="s">${esc(b)}</span><span class="go">${icon('go')}</span></a>`;
+  return `<div class="greet"><span class="avatar" aria-hidden="true">P</span><div><small>${sw ? 'Habari' : 'Hello'}</small><strong>${sw ? 'Karibu PAMBANA' : 'Welcome to PAMBANA'}</strong></div></div>
+    <section class="banner"><span class="eyebrow">${sw ? 'Pambana: pigana na ushinde' : 'Pambana: fight and overcome'}</span>
+      <h1 tabindex="-1">${esc(C.FULL_NAME)}</h1><p>${l('tagline')}</p><a class="btn danger" href="#/help">${l('help')}</a></section>
+    <p class="credit">${sw ? 'Picha: Raymond Kiunga, Siku ya Lupus Duniani 2026, Nairobi' : 'Photo: Raymond Kiunga, World Lupus Day 2026, Nairobi'}</p>
+    ${weekStrip()}
+    <nav class="quick" aria-label="${l('who')}">
+      <a href="#/checkin"><span class="ico">${icon('check')}</span>${l('checkin')}</a>
+      <a href="#/help"><span class="ico alertic">${icon('alert')}</span>${l('help')}</a>
+      <a href="#/learn"><span class="ico">${icon('book')}</span>${l('learn')}</a>
+      <a href="#/refer"><span class="ico">${icon('health')}</span>${sw ? 'Wahudumu' : 'Health workers'}</a></nav>
+    <h2>${sw ? 'Mkutano ujao wa kikundi' : 'Next group meeting'}</h2>
+    <div class="meet"><div class="when"><b>${m.getDate()}</b><span>${esc(m.toLocaleDateString(loc, { month: 'short' }))}</span></div>
+      <div><strong>${esc(m.toLocaleDateString(loc, { weekday: 'long', day: 'numeric', month: 'long' }))}</strong>
+      <p>${sw ? 'LFA hukutana Jumamosi ya mwisho ya kila mwezi. Piga' : 'LFA meets on the last Saturday of every month. Call'} <a href="tel:${C.LFA_INTL}">${C.LFA_PHONE}</a> ${sw ? 'kupata saa na mahali.' : 'for time and place.'}</p></div></div>
+    <h2>${sw ? 'Ukaguzi wako wa mwisho' : 'Your last check-in'}</h2>
+    ${last ? `<div class="stat3"><div>${t(Q.overall)}<b>${esc(SCALE[state.lang][last.overall])}</b></div><div>${t(Q.fatigue)}<b>${esc(SCALE[state.lang][last.fatigue])}</b></div><div>${t(Q.joints)}<b>${esc(SCALE[state.lang][last.joints])}</b></div></div>
+      <p class="note">${esc(last.date)}. ${esc(FLAG_TEXT.none[state.lang])}</p>` : `<p class="note">${sw ? 'Bado hujajaza. Dakika moja kwa wiki inatosha.' : 'None yet. One minute a week is enough.'} <a href="#/checkin">${l('checkin')}</a></p>`}
     <h2>${l('who')}</h2>
-    <div class="cards">${CARDS.map(([h, a, b]) => `<a class="card" href="${h}"><strong>${t(a)}</strong><span>${t(b)}</span></a>`).join('')}</div>
-    <p class="note">${l('noPhone')}</p><p class="note">${l('privacy')}</p>
-    <p class="note"><a href="#/about">${state.lang === 'sw' ? 'Kuhusu PAMBANA, faragha na ushahidi' : 'About PAMBANA, privacy and evidence'}</a></p>`;
+    <div class="grid2">${tile('#/hub', 'users', sw ? 'Naongoza kikundi' : 'I run a peer hub', sw ? 'Tuma namba za mwezi' : 'Send monthly numbers')}
+      ${tile('#/phone', 'phone', sw ? 'Natumia simu ya kawaida' : 'I use a basic phone', sw ? 'SMS na USSD' : 'SMS and USSD')}
+      ${tile('#/team', 'chart', sw ? 'Nafanya kazi na LFA' : 'I work with LFA', sw ? 'Jumla na viashiria' : 'Totals and indicators')}
+      ${tile('#/about', 'info', sw ? 'Kuhusu PAMBANA' : 'About PAMBANA', sw ? 'Faragha na ushahidi' : 'Privacy and evidence')}</div>
+    <section class="band"><h2>${sw ? 'Hauko peke yako' : 'You are not alone'}</h2><p>${sw ? 'Vikundi vya wenzao vinavyoongozwa na watu wanaoishi na lupus vinaanza katika matawi 10 ya LFA.' : 'Peer groups led by people who live with lupus are starting across LFA\'s 10 chapters.'}</p>
+      <div class="btns"><a class="btn" href="#/hub">${sw ? 'Vikundi' : 'Peer hubs'}</a><a class="btn ghost" href="tel:${C.LFA_INTL}">${sw ? 'Piga LFA' : 'Call LFA'}</a></div></section>
+    <p class="note">${l('noPhone')}</p><p class="note">${l('privacy')}</p>`;
 }
 
 function helpView() {
@@ -63,7 +124,7 @@ function learnView() {
   const sw = state.lang === 'sw';
   const facts = C.LEARN.map(x => { const [h, b] = x[state.lang]; return `<details><summary>${esc(h)}</summary><p>${esc(b)}</p></details>`; }).join('');
   const myths = C.MYTHS.map(x => { const [m, f] = x[state.lang]; return `<div class="myth"><p class="mythq">${sw ? 'Si kweli' : 'Myth'}: ${esc(m)}</p><p>${esc(f)}</p></div>`; }).join('');
-  return `<h1 tabindex="-1">${l('learn')}</h1>${facts}<h2>${sw ? 'Imani potofu' : 'Myths'}</h2>${myths}`;
+  return `<h1 tabindex="-1">${l('learn')}</h1><img class="photo" src="/img/learn.jpg" width="640" height="427" loading="lazy" alt="${sw ? 'Watu wakisikiliza katika kikao cha Siku ya Lupus Duniani' : 'People listening at a World Lupus Day session'}"><p class="credit">${sw ? 'Picha: Raymond Kiunga' : 'Photo: Raymond Kiunga'}</p>${facts}<h2>${sw ? 'Imani potofu' : 'Myths'}</h2>${myths}`;
 }
 
 const SCALE = { en: ['Fine', 'Mild', 'Bad', 'Very bad'], sw: ['Sawa', 'Kidogo', 'Mbaya', 'Mbaya sana'] };
@@ -148,6 +209,7 @@ function hubView() {
     <label class="check"><input type="checkbox" name="shortage"><span>${sw ? 'Kuna uhaba wa dawa' : 'Medicine shortage reported'}</span></label>
     <button class="btn">${sw ? 'Andaa ripoti' : 'Prepare report'}</button></form><p id="huberr" role="alert"></p><div id="hubout"></div>
     ${state.hub.length ? `<h2>${sw ? 'Zilizoandaliwa kwenye simu hii' : 'Prepared on this phone'}</h2><ul>${state.hub.slice(-6).reverse().map(x => `<li><code>${esc(x)}</code></li>`).join('')}</ul>` : ''}
+    <img class="photo" src="/img/hub.jpg" width="640" height="427" loading="lazy" alt="${sw ? 'Kikundi cha wenzao cha LFA kikikutana' : 'An LFA peer support group meeting'}"><p class="credit">${sw ? 'Picha: Raymond Kiunga' : 'Photo: Raymond Kiunga'}</p>
     <h2>${sw ? 'Vikundi vinavyopendekezwa' : 'Proposed hubs'}</h2>
     <p class="note">${sw ? 'Kutoka matawi ya LFA. Bado inasubiri uthibitisho wa LFA.' : 'From LFA\'s listed chapters. Order and placement await LFA\'s confirmation.'}</p>
     <ul>${[1, 2, 3].map(w => `<li>${sw ? 'Awamu' : 'Wave'} ${w}: ${C.HUBS.filter(h => h.wave === w).map(h => esc(h.name)).join(', ')}</li>`).join('')}</ul>`;
@@ -179,8 +241,8 @@ function teamView() {
 
 function moreView() {
   const sw = state.lang === 'sw';
-  const items = [['#/refer', sw ? 'Wahudumu wa afya' : 'Health workers'], ['#/hub', sw ? 'Ripoti ya kikundi' : 'Hub report'], ['#/phone', 'SMS / USSD'], ['#/team', sw ? 'Timu ya LFA' : 'LFA team'], ['#/about', sw ? 'Kuhusu' : 'About']];
-  return `<h1 tabindex="-1">${l('more')}</h1><div class="cards">${items.map(([h, n]) => `<a class="card" href="${h}"><strong>${esc(n)}</strong></a>`).join('')}</div>`;
+  const items = [['#/refer', 'health', sw ? 'Wahudumu wa afya' : 'Health workers'], ['#/hub', 'users', sw ? 'Ripoti ya kikundi' : 'Hub report'], ['#/phone', 'phone', 'SMS / USSD'], ['#/team', 'chart', sw ? 'Timu ya LFA' : 'LFA team'], ['#/about', 'info', sw ? 'Kuhusu' : 'About']];
+  return `<h1 tabindex="-1">${l('more')}</h1><div class="grid2">${items.map(([h, ic, n]) => `<a class="tile" href="${h}"><span class="ico">${icon(ic)}</span><strong>${esc(n)}</strong><span class="go">${icon('go')}</span></a>`).join('')}</div>`;
 }
 
 function aboutView() {
@@ -209,8 +271,8 @@ function render(focus = true) {
   $('#theme').textContent = { auto: 'Auto', light: state.lang === 'sw' ? 'Mwanga' : 'Light', dark: state.lang === 'sw' ? 'Giza' : 'Dark' }[state.theme];
   $('#theme').setAttribute('aria-label', state.lang === 'sw' ? 'Badilisha mwanga' : 'Change theme');
   document.documentElement.dataset.theme = state.theme;
-  const tabs = [['#/', 'home'], ['#/checkin', 'checkin'], ['#/help', 'help'], ['#/learn', 'learn'], ['#/more', 'more']];
-  const nav = tabs.map(([h, k]) => `<a href="${h}" ${location.hash === h || (!location.hash && h === '#/') ? 'aria-current="page"' : ''}>${l(k)}</a>`).join('');
+  const tabs = [['#/', 'home', 'home'], ['#/checkin', 'checkin', 'check'], ['#/help', 'help', 'alert'], ['#/learn', 'learn', 'book'], ['#/more', 'more', 'more']];
+  const nav = tabs.map(([h, k, ic]) => `<a href="${h}" ${location.hash === h || (!location.hash && h === '#/') ? 'aria-current="page"' : ''}>${icon(ic)}<span>${l(k)}</span></a>`).join('');
   $('#tabs').innerHTML = nav; $('#topnav').innerHTML = nav;
   main().innerHTML = (ROUTES[route] || home)();
   bind(route);
