@@ -1,10 +1,12 @@
 import * as C from './content.js';
+import { makeProfile, verify, checkRegistration, waitSeconds } from './auth.js';
 import { NAME as BOT, open as openChat, respond as chatRespond } from './companion.js';
 import { ussd, smsReply, nextStep, diaryFlag, mergeEntry, hubLine, collectHubReports, hubTotals, suppress, reportsCsv, clinicSummary } from './logic.js';
 
 const KEY = 'pambana.v1';
 const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } };
-let state = { lang: 'sw', theme: 'auto', entries: [], visits: [], hub: [], pin: null, reports: '', ...load() };
+let state = { lang: 'sw', theme: 'auto', entries: [], visits: [], hub: [], profile: null, auth: { fails: 0, last: 0 }, reports: '', ...load() };
+delete state.pin; // older builds kept a bare PIN; profiles replace it
 let saveFailed = false;
 const save = () => {
   try { localStorage.setItem(KEY, JSON.stringify(state)); saveFailed = false; } catch { saveFailed = true; }
@@ -24,7 +26,7 @@ const L = {
   tagline: { en: 'Know the warning signs, keep track of how you are, and reach people who understand. You are not fighting alone.', sw: 'Jua dalili za hatari, fuatilia hali yako, na uwafikie wanaokuelewa. Hupigani peke yako.' },
   who: { en: 'What do you need today?', sw: 'Unahitaji nini leo?' },
   noPhone: { en: 'No smartphone? PAMBANA is designed to work by SMS and USSD on any phone. Those services start once a licensed provider is in place.', sw: 'Huna simu janja? PAMBANA imeundwa kufanya kazi kwa SMS na USSD kwenye simu yoyote. Huduma hizi zitaanza baada ya kupata mtoa huduma aliyeidhinishwa.' },
-  privacy: { en: 'Your check-ins stay on this phone. PAMBANA has no accounts and no patient database.', sw: 'Taarifa zako zinabaki kwenye simu hii. PAMBANA haina akaunti wala hifadhidata ya wagonjwa.' },
+  privacy: { en: 'Your check-ins stay on this phone. PAMBANA has no online accounts and no patient database.', sw: 'Taarifa zako zinabaki kwenye simu hii. PAMBANA haina akaunti za mtandaoni wala hifadhidata ya wagonjwa.' },
   saveFail: { en: 'Warning: this phone could not save your last change.', sw: 'Tahadhari: simu hii haikuweza kuhifadhi mabadiliko yako.' },
   back: { en: 'Back', sw: 'Rudi' }, save: { en: 'Save', sw: 'Hifadhi' },
 };
@@ -43,6 +45,8 @@ const ICONS = {
   chart: 'M4 20V10M10 20V4M16 20v-8M22 20H2',
   info: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v5M12 8v.01',
   go: 'M7 17L17 7M9 7h8v8',
+  user: 'M20 21a8 8 0 0 0-16 0M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8',
+  lock: 'M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5z',
   chat: 'M21 12a8 8 0 0 1-11.5 7.2L4 20l1-4.5A8 8 0 1 1 21 12zM8.5 12h.01M12 12h.01M15.5 12h.01',
 };
 const icon = n => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="${ICONS[n]}"/></svg>`;
@@ -81,15 +85,17 @@ function weekStrip() {
 
 function home() {
   const sw = state.lang === 'sw';
-  const last = state.entries.at(-1);
+  const unlocked = !locked();
+  const who = unlocked ? state.profile?.name || '' : '';
+  const last = unlocked ? state.entries.at(-1) : undefined;
   const m = nextMeeting();
   const loc = sw ? 'sw-KE' : 'en-KE';
   const tile = (h, ic, a, b) => `<a class="tile" href="${h}"><span class="ico">${icon(ic)}</span><strong>${esc(a)}</strong><span class="s">${esc(b)}</span><span class="go">${icon('go')}</span></a>`;
-  return `<div class="greet"><span class="avatar" aria-hidden="true">P</span><div><small>${sw ? 'Habari' : 'Hello'}</small><strong>${sw ? 'Karibu PAMBANA' : 'Welcome to PAMBANA'}</strong></div></div>
+  return `<div class="greet"><span class="avatar" aria-hidden="true">${esc((who || 'P')[0].toUpperCase())}</span><div><small>${sw ? 'Habari' : 'Hello'}${who ? `, ${esc(who)}` : ''}</small><strong>${sw ? 'Karibu PAMBANA' : 'Welcome to PAMBANA'}</strong></div></div>
     <section class="banner"><p class="hook"><b>Pambana!</b> <span>${sw ? 'Tushinde pamoja.' : 'Fight on, and overcome together.'}</span></p>
       <h1 tabindex="-1">${esc(C.FULL_NAME)}</h1><p>${l('tagline')}</p><a class="btn danger" href="#/help">${l('help')}</a></section>
     <p class="credit">${sw ? 'Picha: Raymond Kiunga, Siku ya Lupus Duniani 2026, Nairobi' : 'Photo: Raymond Kiunga, World Lupus Day 2026, Nairobi'}</p>
-    ${weekStrip()}
+    ${unlocked ? weekStrip() : ''}
     <nav class="quick" aria-label="${l('who')}">
       <a href="#/checkin"><span class="ico">${icon('check')}</span>${l('checkin')}</a>
       <a href="#/companion"><span class="ico">${icon('chat')}</span>${sw ? 'Mwenza' : 'Companion'}</a>
@@ -101,12 +107,12 @@ function home() {
       <p>${sw ? 'LFA hukutana Jumamosi ya mwisho ya kila mwezi. Piga' : 'LFA meets on the last Saturday of every month. Call'} <a href="tel:${C.LFA_INTL}">${C.LFA_PHONE}</a> ${sw ? 'kupata saa na mahali.' : 'for time and place.'}</p></div></div>
     <h2>${sw ? 'Ukaguzi wako wa mwisho' : 'Your last check-in'}</h2>
     ${last ? `<div class="stat3"><div>${t(Q.overall)}<b>${esc(SCALE[state.lang][last.overall])}</b></div><div>${t(Q.fatigue)}<b>${esc(SCALE[state.lang][last.fatigue])}</b></div><div>${t(Q.joints)}<b>${esc(SCALE[state.lang][last.joints])}</b></div></div>
-      <p class="note">${esc(last.date)}. ${esc(FLAG_TEXT.none[state.lang])}</p>` : `<p class="note">${sw ? 'Bado hujajaza. Dakika moja kwa wiki inatosha.' : 'None yet. One minute a week is enough.'} <a href="#/checkin">${l('checkin')}</a></p>`}
+      <p class="note">${esc(last.date)}. ${esc(FLAG_TEXT.none[state.lang])}</p>` : `<p class="note">${unlocked ? `${sw ? 'Bado hujajaza. Dakika moja kwa wiki inatosha.' : 'None yet. One minute a week is enough.'} <a href="#/checkin">${l('checkin')}</a>` : `<a href="#/account">${sw ? 'Ingia ili uone ukaguzi wako' : 'Log in to see your check-ins'}</a>`}</p>`}
     <h2>${l('who')}</h2>
     <div class="grid2">${tile('#/hub', 'users', sw ? 'Naongoza kikundi' : 'I run a peer hub', sw ? 'Tuma namba za mwezi' : 'Send monthly numbers')}
       ${tile('#/phone', 'phone', sw ? 'Natumia simu ya kawaida' : 'I use a basic phone', sw ? 'SMS na USSD' : 'SMS and USSD')}
       ${tile('#/team', 'chart', sw ? 'Nafanya kazi na LFA' : 'I work with LFA', sw ? 'Jumla na viashiria' : 'Totals and indicators')}
-      ${tile('#/about', 'info', sw ? 'Kuhusu PAMBANA' : 'About PAMBANA', sw ? 'Faragha na ushahidi' : 'Privacy and evidence')}</div>
+      ${state.profile ? tile('#/account', unlocked ? 'user' : 'lock', unlocked ? (sw ? 'Wasifu wangu' : 'My profile') : (sw ? 'Ingia' : 'Log in'), sw ? 'Faragha, kwenye simu hii' : 'Private, on this phone') : tile('#/account', 'user', sw ? 'Fungua wasifu' : 'Create a profile', sw ? 'Jina na PIN, hakuna barua pepe' : 'Nickname and PIN, no email')}</div>
     <section class="band"><h2>${sw ? 'Hauko peke yako' : 'You are not alone'}</h2><p>${sw ? 'Vikundi vya wenzao vinavyoongozwa na watu wanaoishi na lupus vinaanza katika matawi 10 ya LFA.' : 'Peer groups led by people who live with lupus are starting across LFA\'s 10 chapters.'}</p>
       <div class="btns"><a class="btn" href="#/hub">${sw ? 'Vikundi' : 'Peer hubs'}</a><a class="btn ghost" href="tel:${C.LFA_INTL}">${sw ? 'Piga LFA' : 'Call LFA'}</a></div></section>
     <p class="note">${l('noPhone')}</p><p class="note">${l('privacy')}</p>`;
@@ -137,15 +143,9 @@ const Q = {
 };
 const scale = name => `<fieldset><legend>${t(Q[name])}</legend><div class="seg">${SCALE[state.lang].map((s, i) => `<label><input type="radio" name="${name}" value="${i}" required><span>${esc(s)}</span></label>`).join('')}</div></fieldset>`;
 
-const pinPass = { ok: false };
-async function hash(pin) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`pambana:${pin}`));
-  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
-}
 
 function checkinView() {
   const sw = state.lang === 'sw';
-  if (state.pin && !pinPass.ok) return `<h1 tabindex="-1">PAMBANA</h1><form id="unlock"><label>PIN <input id="pin" type="password" inputmode="numeric" pattern="[0-9]{4,8}" autocomplete="off" required></label><button class="btn">${sw ? 'Fungua' : 'Unlock'}</button><p id="pinerr" role="alert"></p></form><button id="wipe" class="btn ghost">${sw ? 'Umesahau PIN? Futa yote' : 'Forgot PIN? Erase everything'}</button>`;
   const last = state.entries.at(-1);
   const hist = state.entries.slice(-8).reverse().map(e => `<li>${esc(e.date)}: ${esc(SCALE[state.lang][e.overall])}${e.urgent.length ? ` (${sw ? 'dalili ya hatari' : 'danger sign noted'})` : ''}</li>`).join('');
   return `<h1 tabindex="-1">${l('checkin')}</h1><p>${sw ? 'Dakika moja kwa wiki inatosha. Inabaki kwenye simu hii.' : 'One minute a week is enough. It stays on this phone.'}</p>
@@ -161,10 +161,9 @@ function checkinView() {
     ${state.visits.length ? `<ul>${state.visits.slice(-4).reverse().map(v => `<li>${esc(v.date)}: BP ${esc(v.bp || '-')}, ${esc(v.kg || '-')} kg</li>`).join('')}</ul>` : ''}
     <h2>${sw ? 'Data yangu' : 'My data'}</h2>
     <div class="btns"><button id="summary" class="btn ghost" ${last ? '' : 'disabled'}>${sw ? 'Muhtasari wa kliniki' : 'Clinic summary'}</button>
-    <button id="setpin" class="btn ghost">${state.pin ? (sw ? 'Ondoa PIN' : 'Remove PIN') : (sw ? 'Weka PIN' : 'Set a PIN')}</button>
     <button id="wipe" class="btn ghost">${sw ? 'Futa yote' : 'Erase everything'}</button></div>
     <pre id="out" hidden></pre>
-    <p class="note">${sw ? 'PIN inaficha skrini hii tu, haisimbi data. Ukifuta data ya kivinjari, taarifa zitapotea.' : 'A PIN only hides this screen. It does not encrypt the data. Clearing browser data erases your check-ins.'}</p>`;
+    <p class="note">${sw ? 'PIN inaficha skrini zako tu, haisimbi data. Ukifuta data ya kivinjari, taarifa zitapotea.' : 'Your PIN only hides your screens. It does not encrypt the data. Clearing browser data erases your check-ins.'}</p>`;
 }
 
 const FLAG_TEXT = {
@@ -255,16 +254,115 @@ function aboutView() {
     <li>Kenya has very few rheumatologists, around a dozen for more than 50 million people, so early care falls to frontline workers.</li>
     <li>Diagnosis is often delayed. African studies report delays of 15 months or more. A Kenyan baseline still has to be measured.</li></ul>
     <h2>Your privacy</h2>
-    <ul><li>No accounts, cookies or tracking.</li><li>Check-ins stay on your phone until you share or erase them.</li><li>Hub reports contain counts only, and public figures hide counts under 5.</li><li>For adults only in this release.</li></ul>
+    <ul><li>No online accounts, cookies or tracking. A profile is only a nickname and PIN kept on your phone.</li><li>Check-ins stay on your phone until you share or erase them.</li><li>Hub reports contain counts only, and public figures hide counts under 5.</li><li>For adults only in this release.</li></ul>
     <h2>Status</h2>
     <p>This is a pilot draft. It gives information and next steps, and it never diagnoses, scores or advises on doses. Clinical review, Kiswahili review and data protection steps must finish before use with real patients.</p>
     <p>Contact: <a href="tel:${C.LFA_INTL}">${C.LFA_PHONE}</a>, <a href="https://lupusfa.org" rel="noopener">lupusfa.org</a></p>`;
 }
 
+// Device-only profile: register and log in on this phone, with no server. Help and
+// danger signs are never behind it.
+const auth = { ok: false };
+const locked = () => !!state.profile && !auth.ok;
+const blank = () => ({ entries: [], visits: [], hub: [], profile: null, auth: { fails: 0, last: 0 }, reports: '' });
+
+function eraseAll() {
+  const sw = state.lang === 'sw';
+  if (!confirm(sw ? 'Futa data yote na wasifu kwenye simu hii?' : 'Erase all data and your profile on this phone?')) return;
+  try { localStorage.removeItem(KEY); } catch { /* storage blocked: nothing to erase */ }
+  state = { ...state, ...blank() }; auth.ok = false; lastResult = null; chat = null; save(); location.hash = '#/'; render();
+}
+
+function loginView() {
+  const sw = state.lang === 'sw';
+  return `<h1 tabindex="-1">${sw ? 'Karibu tena' : 'Welcome back'}, ${esc(state.profile.name)}</h1>
+    <p>${sw ? 'Weka PIN yako ili kuona taarifa zako. Msaada na dalili za hatari hazihitaji kuingia.' : 'Enter your PIN to see your information. Help and danger signs never need a login.'}</p>
+    <form id="login" class="stack"><label>PIN <input id="pin" type="password" inputmode="numeric" maxlength="8" autocomplete="off" required></label><button class="btn">${sw ? 'Ingia' : 'Log in'}</button></form>
+    <p id="loginerr" role="alert"></p>
+    <div class="btns"><a class="btn danger" href="#/help">${l('help')}</a><button id="forgot" class="btn ghost">${sw ? 'Umesahau PIN? Futa yote' : 'Forgot PIN? Erase everything'}</button></div>`;
+}
+
+function bindLogin() {
+  const sw = state.lang === 'sw';
+  const out = $('#loginerr');
+  $('#forgot').onclick = eraseAll;
+  $('#login').onsubmit = async e => {
+    e.preventDefault();
+    const wait = waitSeconds(state.auth.fails, state.auth.last);
+    if (wait) { out.textContent = sw ? `Subiri sekunde ${wait} kisha ujaribu tena.` : `Please wait ${wait} seconds and try again.`; return; }
+    if (await verify(state.profile, $('#pin').value)) { auth.ok = true; state.auth = { fails: 0, last: 0 }; save(); render(); return; }
+    state.auth = { fails: state.auth.fails + 1, last: Date.now() }; save();
+    $('#pin').value = '';
+    const w = waitSeconds(state.auth.fails, state.auth.last);
+    out.textContent = (sw ? 'PIN si sahihi.' : 'Wrong PIN.') + (w ? (sw ? ` Subiri sekunde ${w}.` : ` Please wait ${w} seconds.`) : '');
+  };
+}
+
+function registerView() {
+  const sw = state.lang === 'sw';
+  return `<h1 tabindex="-1">${sw ? 'Fungua wasifu wako wa siri' : 'Create your private profile'}</h1>
+    <p>${sw ? 'Hakuna barua pepe, namba ya simu wala akaunti ya mtandaoni. Jina lako la utani na PIN vinabaki kwenye simu hii tu. Msaada na dalili za hatari hazihitaji wasifu.' : 'No email, phone number or online account. Your nickname and PIN stay on this phone only. Help and danger signs never need a profile.'}</p>
+    <form id="register" class="stack" novalidate>
+      <label>${sw ? 'Jina la utani' : 'Nickname'} <input name="name" maxlength="24" autocomplete="off" required></label>
+      <label>${sw ? 'PIN (namba 4 hadi 8)' : 'PIN (4 to 8 digits)'} <input name="pin" type="password" inputmode="numeric" maxlength="8" autocomplete="off" required></label>
+      <label>${sw ? 'Rudia PIN' : 'Repeat PIN'} <input name="pin2" type="password" inputmode="numeric" maxlength="8" autocomplete="off" required></label>
+      <label class="check"><input type="checkbox" id="showpin"><span>${sw ? 'Onyesha PIN' : 'Show PIN'}</span></label>
+      <label class="check"><input type="checkbox" name="adult"><span>${sw ? 'Nina umri wa miaka 18 au zaidi' : 'I am 18 or older'}</span></label>
+      <label class="check"><input type="checkbox" name="consent"><span>${sw ? 'Naelewa taarifa zangu zinabaki kwenye simu hii, na nikisahau PIN njia pekee ni kufuta kila kitu.' : 'I understand my information stays on this phone, and if I forget my PIN the only way back in is to erase everything.'}</span></label>
+      <p id="regerr" role="alert"></p>
+      <button class="btn">${sw ? 'Fungua wasifu' : 'Create profile'}</button>
+    </form>
+    <a class="btn ghost" href="#/">${sw ? 'Endelea bila wasifu' : 'Continue without a profile'}</a>`;
+}
+
+function bindRegister() {
+  const sw = state.lang === 'sw';
+  const MSG = {
+    name: sw ? 'Tumia jina la utani la herufi 2 hadi 24. Usiweke barua pepe wala namba ya simu.' : 'Use a nickname of 2 to 24 characters. No email or phone number.',
+    pin: sw ? 'PIN iwe namba 4 hadi 8.' : 'PIN must be 4 to 8 digits.',
+    match: sw ? 'PIN mbili hazilingani.' : 'The two PINs do not match.',
+    adult: sw ? 'PAMBANA ni ya watu wazima, miaka 18 na zaidi, kwa sasa. Ukiwa mdogo, ongea na mzazi au daktari, au piga LFA.' : 'PAMBANA is for adults, 18 and over, for now. If you are younger, please talk to a parent or clinician, or call LFA.',
+    consent: sw ? 'Tafadhali thibitisha kwamba umeelewa.' : 'Please confirm that you understand.',
+  };
+  const form = $('#register');
+  $('#showpin').onchange = e => { form.pin.type = form.pin2.type = e.target.checked ? 'text' : 'password'; };
+  form.onsubmit = async e => {
+    e.preventDefault();
+    const f = new FormData(form);
+    const errs = checkRegistration({ name: f.get('name'), pin: f.get('pin'), pin2: f.get('pin2'), adult: f.has('adult'), consent: f.has('consent') });
+    $('#regerr').textContent = errs.map(k => MSG[k]).join(' ');
+    if (errs.length) return;
+    state.profile = await makeProfile({ name: f.get('name'), pin: f.get('pin') });
+    state.auth = { fails: 0, last: 0 };
+    auth.ok = true;
+    save();
+    location.hash = '#/';
+    render();
+  };
+}
+
+function profileView() {
+  const sw = state.lang === 'sw';
+  return `<h1 tabindex="-1">${esc(state.profile.name)}</h1>
+    <p>${sw ? 'Wasifu wa siri kwenye simu hii tangu' : 'Private profile on this phone since'} ${esc(state.profile.created)}.</p>
+    <div class="btns"><a class="btn" href="#/checkin">${l('checkin')}</a><a class="btn ghost" href="#/companion">${esc(BOT[state.lang])}</a></div>
+    <h2>${sw ? 'Usalama' : 'Security'}</h2>
+    <div class="btns"><button id="logout" class="btn ghost">${sw ? 'Toka' : 'Log out'}</button><button id="erase" class="btn ghost">${sw ? 'Futa wasifu na data yote' : 'Erase profile and all data'}</button></div>
+    <p class="note">${sw ? 'PIN inaficha skrini zako tu, haisimbi data. Simu ikipotea au ukifuta data ya kivinjari, taarifa zitapotea.' : 'Your PIN only hides your screens. It does not encrypt the data. If the phone is lost or browser data is cleared, your information is lost.'}</p>`;
+}
+
+function bindProfile() {
+  $('#logout').onclick = () => { auth.ok = false; chat = null; location.hash = '#/'; render(); };
+  $('#erase').onclick = eraseAll;
+}
+
+const accountView = () => (!state.profile ? registerView() : locked() ? loginView() : profileView());
+function bindAccount() { if (!state.profile) bindRegister(); else if (locked()) bindLogin(); else bindProfile(); }
+
 // The Warrior Companion: scripted, bilingual, and kept in memory only (never stored or sent).
 let chat = null;
 const chatCtx = () => ({
-  name: state.profile?.name || '', lang: state.lang, today: today(),
+  name: locked() ? '' : state.profile?.name || '', lang: state.lang, today: today(),
   meeting: nextMeeting().toLocaleDateString(state.lang === 'sw' ? 'sw-KE' : 'en-KE', { weekday: 'long', day: 'numeric', month: 'long' }),
   checkedInToday: state.entries.at(-1)?.date === today(),
 });
@@ -318,7 +416,7 @@ function bindCompanion() {
   $('#chatreset').onclick = () => { chat = null; render(false); };
 }
 
-const ROUTES = { '': home, companion: companionView, help: helpView, learn: learnView, checkin: checkinView, refer: referView, manual: manualView, hub: hubView, phone: phoneView, team: teamView, more: moreView, about: aboutView };
+const ROUTES = { '': home, account: accountView, companion: companionView, help: helpView, learn: learnView, checkin: checkinView, refer: referView, manual: manualView, hub: hubView, phone: phoneView, team: teamView, more: moreView, about: aboutView };
 
 function render(focus = true) {
   const route = location.hash.replace(/^#\/?/, '');
@@ -333,8 +431,12 @@ function render(focus = true) {
   const tabs = [['#/', 'home', 'home'], ['#/checkin', 'checkin', 'check'], ['#/help', 'help', 'alert'], ['#/learn', 'learn', 'book'], ['#/more', 'more', 'more']];
   const nav = tabs.map(([h, k, ic]) => `<a href="${h}" ${location.hash === h || (!location.hash && h === '#/') ? 'aria-current="page"' : ''}>${icon(ic)}<span>${l(k)}</span></a>`).join('');
   $('#tabs').innerHTML = nav; $('#topnav').innerHTML = nav;
-  main().innerHTML = (ROUTES[route] || home)();
-  bind(route);
+  const guarded = locked() && ['checkin', 'companion'].includes(route);
+  main().innerHTML = guarded ? loginView() : (ROUTES[route] || home)();
+  if (guarded) bindLogin(); else bind(route);
+  const ac = $('#acct');
+  ac.innerHTML = icon(locked() ? 'lock' : 'user');
+  ac.setAttribute('aria-label', !state.profile ? (state.lang === 'sw' ? 'Fungua wasifu au ingia' : 'Create a profile or log in') : locked() ? (state.lang === 'sw' ? 'Ingia' : 'Log in') : `${state.lang === 'sw' ? 'Wasifu' : 'Profile'}: ${state.profile.name}`);
   const result = lastResult?.route === route && $(lastResult.target);
   if (result) { result.className = lastResult.cls; result.innerHTML = lastResult.html; }
   if (focus) scrollTo(0, 0);
@@ -385,23 +487,13 @@ function bind(route) {
     };
   }
   if (route === 'companion') bindCompanion();
+  if (route === 'account') bindAccount();
   if (route === 'phone') bindPhone(sw);
   if (route === 'team') bindTeam(sw);
 }
 
 function bindCheckin(sw) {
-  $('#wipe').onclick = () => {
-    if (!confirm(sw ? 'Futa data yote kwenye simu hii?' : 'Erase all data on this phone?')) return;
-    try { localStorage.removeItem(KEY); } catch { /* storage blocked: nothing to erase */ }
-    state = { ...state, entries: [], visits: [], hub: [], pin: null, reports: '' }; pinPass.ok = false; lastResult = null; save(); render();
-  };
-  if (state.pin && !pinPass.ok) {
-    $('#unlock').onsubmit = async e => {
-      e.preventDefault();
-      if (await hash($('#pin').value) === state.pin) { pinPass.ok = true; render(); } else $('#pinerr').textContent = sw ? 'PIN si sahihi.' : 'Wrong PIN.';
-    };
-    return;
-  }
+  $('#wipe').onclick = eraseAll;
   navigator.storage?.persist?.().catch(() => {});
   $('#diary').onsubmit = e => {
     e.preventDefault();
@@ -428,13 +520,6 @@ function bindCheckin(sw) {
     const labels = { feeling: raw(Q.overall), tired: raw(Q.fatigue), joints: raw(Q.joints), missed: raw(Q.missed), ranOut: raw(Q.ranOut), newSkin: raw(Q.newSkin), scale: SCALE[state.lang], flag: id => raw(C.RED_FLAGS.find(f => f.id === id)) };
     pre.textContent = `PAMBANA\n${clinicSummary(state.entries, labels)}\n${state.visits.slice(-4).map(v => `${v.date}: BP ${v.bp || '-'}, ${v.kg || '-'} kg`).join('\n')}`;
     pre.hidden = false;
-  };
-  $('#setpin').onclick = async () => {
-    if (state.pin) { state.pin = null; save(); render(false); return; }
-    const pin = prompt(sw ? 'Weka PIN ya namba 4 hadi 8' : 'Choose a PIN of 4 to 8 digits');
-    if (pin === null) return;
-    if (!/^\d{4,8}$/.test(pin)) { alert(sw ? 'PIN haikuwekwa. Tumia namba 4 hadi 8.' : 'PIN not set. Use 4 to 8 digits.'); return; }
-    state.pin = await hash(pin); pinPass.ok = true; save(); render(false);
   };
 }
 
@@ -477,11 +562,11 @@ function bindTeam(sw) {
 $('#lang').onclick = () => { state.lang = state.lang === 'sw' ? 'en' : 'sw'; if (chat) chat.session.lang = state.lang; save(); render(false); };
 $('#theme').onclick = () => { state.theme = { auto: 'light', light: 'dark', dark: 'auto' }[state.theme]; save(); render(false); };
 $('.skip').onclick = e => { e.preventDefault(); main().focus(); };
-addEventListener('storage', e => { if (e.key === KEY) { state = { ...state, entries: [], visits: [], hub: [], pin: null, reports: '', ...load() }; render(false); } });
+addEventListener('storage', e => { if (e.key === KEY) { state = { ...state, ...blank(), ...load() }; render(false); } });
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden || !state.pin || !pinPass.ok) return;
-  pinPass.ok = false;
-  if (location.hash === '#/checkin' && !$('#diary input:checked')) render(false);
+  if (!document.hidden || !state.profile || !auth.ok) return;
+  auth.ok = false; chat = null;
+  if (!$('#diary input:checked')) render(false);
 });
 addEventListener('hashchange', () => render());
 render(false);
